@@ -1,0 +1,50 @@
+BasedOnStyle: LLVM
+AlignAfterOpenBracket: BlockIndent
+AlignConsecutiveShortCaseStatements: 
+  Enabled: true
+  AcrossEmptyLines: true
+  AcrossComments: true
+  AlignCaseArrows: true
+  AlignCaseColons: true
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel: false
+  AfterStruct: false         
+  AfterClass: false
+  AfterFunction: false
+  AfterControlStatement: false
+  AfterEnum: true
+  AfterUnion: true
+  AfterExternBlock: true
+  BeforeElse: false
+  BeforeWhile: false
+  BeforeLambdaBody: false
+  IndentBraces: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+AlignEscapedNewlines: Left
+# OperandAlignmentStyle: Align
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 2
+AllowShortBlocksOnASingleLine: Always
+AllowShortCaseExpressionOnASingleLine: true
+EmptyLineBeforeAccessModifier: Always
+AllowShortLambdasOnASingleLine: Empty
+MaxEmptyLinesToKeep: 2
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 120
+AccessModifierOffset: -4
+PointerAlignment: Right
+InsertBraces: true
+AllowShortFunctionsOnASingleLine: Empty
+PackConstructorInitializers: CurrentLine
+IndentExportBlock: true
+IndentPPDirectives: AfterHash
+FixNamespaceComments: true
+AlignConsecutiveDeclarations: false
+BinPackArguments: false
+BinPackParameters: false
