@@ -31,7 +31,11 @@ bool EdgeDetector::check_dir(uint8_t grad_dir, ChainDirection chain_dir) const {
 
 std::pair<cv::Mat, std::vector<EdgeDetector::Segment>> EdgeDetector::detect(const cv::Mat &input_image) const {
     cv::Mat gray;
-    cv::cvtColor(input_image, gray, cv::COLOR_BGR2GRAY);
+    if (input_image.channels() == 3) {
+        cv::cvtColor(input_image, gray, cv::COLOR_BGR2GRAY);
+    } else if (input_image.channels() == 1) {
+        gray = input_image.clone();
+    }
 
     cv::Mat blurred;
     if (params.guassian_sigma == 1.0) {
@@ -49,7 +53,7 @@ std::pair<cv::Mat, std::vector<EdgeDetector::Segment>> EdgeDetector::detect(cons
     cv::normalize(grad_visual, grad_visual, 0, 255, cv::NORM_MINMAX);
     cv::imwrite("debug_gradient.png", grad_visual);
     cv::imshow("Gradient Image", grad_visual);
-    cv::waitKey(0); // Ненадолго показываем
+    cv::waitKey(10); // Ненадолго показываем
 
     // ========== ДЕБАГ ВЫВОД 2: Карта направлений ==========
     cv::Mat dir_visual(grad.rows, grad.cols, CV_8UC1, cv::Scalar(0));
@@ -66,7 +70,7 @@ std::pair<cv::Mat, std::vector<EdgeDetector::Segment>> EdgeDetector::detect(cons
     }
     cv::imwrite("debug_directions.png", dir_visual);
     cv::imshow("Directions Map", dir_visual);
-    cv::waitKey(0);
+    cv::waitKey(10);
 
     // ========== ДЕБАГ ВЫВОД 3: Anchor точки ==========
     cv::Mat anchor_visual(grad.rows, grad.cols, CV_8UC1, cv::Scalar(0));
@@ -75,7 +79,7 @@ std::pair<cv::Mat, std::vector<EdgeDetector::Segment>> EdgeDetector::detect(cons
     }
     cv::imwrite("debug_anchors.png", anchor_visual);
     cv::imshow("Anchor Points", anchor_visual);
-    cv::waitKey(0);
+    cv::waitKey(10);
 
     return build_segments_and_edge_image(grad, dir, anchor_points);
 }
