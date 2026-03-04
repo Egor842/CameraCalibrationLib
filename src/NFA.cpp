@@ -79,7 +79,7 @@ const double RELATIVE_ERROR_FACTOR = 100.0;
 NFA::NFA(double prob, double logNT) : prob(prob), logNT(logNT) {
     LUT.push_back(1);
     int k = 1;
-    for (int n = 1; n < MAX_LUT_SIZE; n++) {
+    for (int n = 1; n < MAX_LUT_SIZE * 10; n++) {
         bool found_valid = false;
         double nfa_value;
 
@@ -97,7 +97,7 @@ NFA::NFA(double prob, double logNT) : prob(prob), logNT(logNT) {
         if (found_valid) {
             LUT.push_back(k);
         } else {
-            LUT.push_back(MAX_LUT_SIZE + 1);
+            LUT.push_back(MAX_LUT_SIZE * 10 + 1);
         }
     }
 }

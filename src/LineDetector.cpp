@@ -414,7 +414,7 @@ std::vector<Line> LineDetector::split_segment(const Segment &segment) const noex
                     idx++;
                 }
                 start_line = projection_point_to_line(line_coeffs, segment[idx]);
-                size_t skipped_pixels = idx;
+                size_t skipped_pixels = idx - it_start;
 
                 idx = last_good_index;
                 while (calculate_dist(idx) > params.line_error) {
@@ -431,10 +431,10 @@ std::vector<Line> LineDetector::split_segment(const Segment &segment) const noex
                     line_coeffs[2],
                     start_line,
                     end_line,
-                    idx - skipped_pixels + 1,
-                    skipped_pixels
+                    idx - it_start - skipped_pixels + 1,
+                    it_start + skipped_pixels
                 );
-                len = idx - skipped_pixels + 1;
+                len = idx - it_start - skipped_pixels + 1;
                 break;
             }
         }
@@ -519,7 +519,7 @@ bool LineDetector::validate_line_on_segment(const cv::Mat &img, const Line &line
     if (line.get_len() >= 80) {
         valid = true;
     } else if (line.get_len() <= 25) {
-        valid = validate_line_on_segment_in_rect(img, segment, line);
+        valid = validate_line_on_segment_in_rect(img, segment, line, true);
     } else {
         valid = validate_line_on_segment_in_rect(img, segment, line, false);
         if (valid == false) {
