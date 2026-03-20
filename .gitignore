@@ -43,5 +43,6 @@
 .cache/
 .vscode/
 build/
-test
+tests/
+data/
 
