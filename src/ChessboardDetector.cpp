@@ -1,6 +1,9 @@
 #include "../include/ChessboardDetector.hpp"
+#include <mutex>
 #include <opencv2/core/hal/hal.hpp>
+#include <opencv2/highgui.hpp>
 #include <random>
+#include <thread>
 #include <utility>
 
 
@@ -28,7 +31,7 @@ ChessboardDetector::GradientSet::GradientSet(const cv::Mat &gray) : GradientSet(
     create_img_memory_continuous(grad_img);
 
     cv::hal::fastAtan64f(
-        (const double *)grad_x.data, (const double *)grad_y.data, (double *)angle_img.data, gray.rows * gray.cols, false
+        (const double *)grad_y.data, (const double *)grad_x.data, (double *)angle_img.data, gray.rows * gray.cols, false
     );
     angle_img.forEach<double>([](double &pixel, const int *pos) -> void {
         pixel = pixel >= M_PI ? pixel - M_PI : pixel;
@@ -53,11 +56,38 @@ void plot_corners(const cv::Mat &img, const std::vector<cv::Point2d> &corners, c
         img_show = img.clone();
     }
     for (int i = 0; i < corners.size(); ++i) {
-        cv::circle(img_show, corners[i], 1, cv::Scalar(0, 0, 255), -1);
+        cv::circle(img_show, corners[i], 3, cv::Scalar(0, 0, 255), -1);
     }
-    cv::imwrite("res.png", img_show);
-    cv::resize(img_show, img_show, cv::Size(640, 480));
+    cv::resize(img_show, img_show, cv::Size(640 * 2, 480 * 2));
     cv::imshow(str, img_show);
+    cv::waitKey(0);
+}
+
+
+void visualize_corners_with_directions(
+    const cv::Mat &img, const ChessboardCorners &corners, const std::string &winname
+) {
+    cv::Mat img_show;
+    if (img.channels() == 3) {
+        img_show = img.clone();
+    } else {
+        cv::cvtColor(img, img_show, cv::COLOR_GRAY2BGR);
+    }
+
+    for (size_t i = 0; i < corners.pixels.size(); ++i) {
+        cv::Point2d pt = corners.pixels[i];
+        double r = corners.radius[i];
+        cv::Point2d dir1 = corners.edge_directions[i][0];
+        cv::Point2d dir2 = corners.edge_directions[i][1];
+        double len = r * 1.5;
+        cv::Point2d end1 = pt + dir1 * len;
+        cv::Point2d end2 = pt + dir2 * len;
+        cv::line(img_show, pt, end1, cv::Scalar(0, 0, 255), 1);
+        cv::line(img_show, pt, end2, cv::Scalar(0, 255, 0), 1);
+        cv::circle(img_show, pt, 2, cv::Scalar(255, 0, 0), -1);
+    }
+    cv::resize(img_show, img_show, cv::Size(640 * 2, 480 * 2));
+    cv::imshow(winname, img_show);
     cv::waitKey(0);
 }
 
@@ -98,35 +128,49 @@ std::vector<Chessboard> ChessboardDetector::detect(const cv::Mat &img) const {
         }
 
         auto new_corners = get_initial_corners(gray_image);
+        // plot_corners(img, new_corners.pixels, "INIT");
+        // std::cout << new_corners.pixels.size() << std::endl;
 
         raw_refinement(gray_image, curr_gradient_set, new_corners);
 
         new_corners = std::move(filter_corners(gray_image, curr_gradient_set, new_corners));
+        // std::cout << new_corners.pixels.size() << std::endl;
 
         refine_corners(curr_gradient_set, new_corners);
+        // std::cout << new_corners.pixels.size() << std::endl;
 
         merge_raw_corners(corners, new_corners, scale);
+
+        // plot_corners(img, new_corners.pixels, "merge INIT");
+
+        // std::cout << "ggg" << std::endl;
     }
+
+    // std::cout << corners.pixels.size() << std::endl;
+    // plot_corners(img, corners.pixels, "after INIT");
+
+    // visualize_corners_with_directions(img, corners, "directions before polyfit");
 
     if (params.polynomial_fit == true) {
         polynomial_fit(gray, corners, params.polynomial_fit_kernel_size / 2);
     }
 
-    // std::cout << corners.pixels.size() << std::endl;
-    // for (auto corner : corners.pixels) {
-    //     std::cout << corner << std::endl;
-    // }
+    // visualize_corners_with_directions(img, corners, "directions after polyfit");
+
+    // plot_corners(img, corners.pixels, "GG");
 
     calculate_corners_score(gray, gradient_set, corners);
 
-    plot_corners(img, corners.pixels, "GG");
+    // plot_corners(img, corners.pixels, "123");
 
     auto boards = std::move(boards_from_corners(gray, corners));
 
     for (auto &board : boards) {
         board.update_corners(corners);
+        // plot_corners(img, board.pixels, "res");
     }
 
+    // cv::destroyAllWindows();
     return boards;
 }
 
@@ -286,26 +330,25 @@ ChessboardCorners ChessboardDetector::get_initial_corners(const cv::Mat &gray) c
 
             cv::Mat response_img;
             cv::normalize(corner_response, response_img, 0, 255, cv::NORM_MINMAX, CV_8U);
-            cv::imwrite("response_radius_" + std::to_string(current_radius) + ".png", response_img);
             current_radius = templates.template_radius;
             corner_response = cv::Mat::zeros(gray.size(), CV_64F);
         }
 
-        cv::filter2D(gray, response_q1, -1, templates.top_left, cv::Point(-1, -1), 0, cv::BORDER_REPLICATE);
-        cv::filter2D(gray, response_q2, -1, templates.top_right, cv::Point(-1, -1), 0, cv::BORDER_REPLICATE);
-        cv::filter2D(gray, response_q3, -1, templates.bottom_left, cv::Point(-1, -1), 0, cv::BORDER_REPLICATE);
+        cv::filter2D(gray, response_q1, -1, templates.top_right, cv::Point(-1, -1), 0, cv::BORDER_REPLICATE);
+        cv::filter2D(gray, response_q2, -1, templates.top_left, cv::Point(-1, -1), 0, cv::BORDER_REPLICATE);
         cv::filter2D(gray, response_q4, -1, templates.bottom_right, cv::Point(-1, -1), 0, cv::BORDER_REPLICATE);
+        cv::filter2D(gray, response_q3, -1, templates.bottom_left, cv::Point(-1, -1), 0, cv::BORDER_REPLICATE);
 
         response_mean = (response_q1 + response_q2 + response_q3 + response_q4) / 4;
 
-        // case 1: quadrants 1&2 are white, quadrants 3&4 are black
-        white_score = cv::min(response_q1, response_q4) - response_mean;
-        black_score = response_mean - cv::max(response_q2, response_q3);
+        // case 1: quadrants 1&3 are white, quadrants 2&4 are black
+        white_score = cv::min(response_q1, response_q3) - response_mean;
+        black_score = response_mean - cv::max(response_q2, response_q4);
         score_case1 = cv::min(white_score, black_score);
 
-        // case 2: quadrants 3&4 are white, quadrants 1&2 are black
-        white_score = response_mean - cv::max(response_q1, response_q4);
-        black_score = cv::min(response_q2, response_q3) - response_mean;
+        // case 2: quadrants 1&3 are black, quadrants 2&4 are white
+        white_score = response_mean - cv::max(response_q1, response_q3);
+        black_score = cv::min(response_q2, response_q4) - response_mean;
         score_case2 = cv::min(white_score, black_score);
 
         corner_response = cv::max(corner_response, cv::max(score_case1, score_case2));
@@ -500,9 +543,9 @@ ChessboardDetector::filter_corners(const cv::Mat &gray, const GradientSet &grad_
                 }
             }
 
-            static std::mutex mtx;
+            // static std::mutex mtx;
             if (num_crossings == filter_params.target_num_crossing && num_modes == filter_params.target_num_modes) {
-                std::lock_guard<std::mutex> lock(mtx);
+                // std::lock_guard<std::mutex> lock(mtx);
                 valid[idx] = true;
             }
         }
@@ -550,13 +593,13 @@ ChessboardDetector::CorrelationTemplates::CorrelationTemplates(size_t r, std::pa
             double dead_zone = 0.1;
             if (dist <= r) {
                 if (s1 <= -dead_zone && s2 <= -dead_zone) {
-                    top_left.at<double>(j, i) = 1;     // Q1 (-,-) -> top_left
+                    bottom_left.at<double>(j, i) = 1;  // Q3 (-,-)
                 } else if (s1 >= dead_zone && s2 >= dead_zone) {
-                    bottom_right.at<double>(j, i) = 1; // Q4 (+,+) -> bottom_right
+                    top_right.at<double>(j, i) = 1;    // Q1 (+,+)
                 } else if (s1 <= -dead_zone && s2 >= dead_zone) {
-                    top_right.at<double>(j, i) = 1;    // Q2 (-,+) -> top_right
+                    top_left.at<double>(j, i) = 1;     // Q2 (-,+)
                 } else if (s1 >= dead_zone && s2 <= -dead_zone) {
-                    bottom_left.at<double>(j, i) = 1;  // Q3 (+,-) -> bottom_left
+                    bottom_right.at<double>(j, i) = 1; // Q4 (+,-)
                 }
             }
         }
@@ -987,7 +1030,7 @@ std::vector<std::array<double, 2>> ChessboardDetector::get_corner_orientation(Gr
         }
     }
 
-    auto modes = meanshift(hist);
+    auto modes = meanshift(hist, 1.5);
     if (modes.size() < 2) {
         return std::vector<std::array<double, 2>>();
     }
@@ -1004,12 +1047,20 @@ std::vector<std::array<double, 2>> ChessboardDetector::get_corner_orientation(Gr
         return std::vector<std::array<double, 2>>();
     }
 
-    std::vector<std::array<double, 2>> corner_orientation(2, std::array<double, 2>());
+    std::vector<std::array<double, 2>> corner_orientation(2);
+    corner_orientation[0] = {std::cos(angle_first), std::sin(angle_first)};
+    corner_orientation[1] = {std::cos(angle_second), std::sin(angle_second)};
 
-    corner_orientation[0][0] = std::cos(angle_first);
-    corner_orientation[0][1] = std::sin(angle_first);
-    corner_orientation[1][0] = std::cos(angle_second);
-    corner_orientation[1][1] = std::sin(angle_second);
+    // std::sort(corner_orientation.begin(), corner_orientation.end(), [](const auto &a1, const auto &a2) {
+    //     return a1[0] * a2[1] - a1[1] * a2[0] > 0;
+    // });
+
+    // corner_orientation.back()[0] = -corner_orientation.back()[0];
+    // corner_orientation.back()[1] = -corner_orientation.back()[1];
+
+    // std::sort(corner_orientation.begin(), corner_orientation.end(), [](const auto &a1, const auto &a2) {
+    //     return a1[0] * a2[1] - a1[1] * a2[0] > 0;
+    // });
 
     return corner_orientation;
 }
@@ -1046,7 +1097,11 @@ void ChessboardDetector::refine_corners(GradientSet &grad_set, ChessboardCorners
             cv::Mat img_weight_patch = extract_subpixel_patch(grad_imd, cv::Point2d(grid_x, grid_y), r);
             img_weight_patch = img_weight_patch.mul(grad_masks[r]);
 
-            auto corner_orientation = get_corner_orientation(grad_set);
+            GradientSet curr_set;
+            curr_set.angle_img = std::move(img_angle_patch);
+            curr_set.grad_img = std::move(img_weight_patch);
+
+            auto corner_orientation = get_corner_orientation(curr_set);
             if (corner_orientation.empty()) {
                 continue;
             }
@@ -1094,8 +1149,10 @@ void ChessboardDetector::refine_corners(GradientSet &grad_set, ChessboardCorners
             };
 
             std::sort(corner_orientation.begin(), corner_orientation.end(), sort_condition);
-            corner_orientation[1][0] *= -1;
-            corner_orientation[1][1] *= -1;
+            corner_orientation[corner_orientation.size() - 1][0] =
+                -corner_orientation[corner_orientation.size() - 1][0];
+            corner_orientation[corner_orientation.size() - 1][1] =
+                -corner_orientation[corner_orientation.size() - 1][1];
             std::sort(corner_orientation.begin(), corner_orientation.end(), sort_condition);
 
             if (params.polynomial_fit) {
@@ -1115,10 +1172,12 @@ void ChessboardDetector::refine_corners(GradientSet &grad_set, ChessboardCorners
         }
     });
 
+    auto raw_orientations = std::move(refinement_corners.edge_directions);
     for (int idx = 0; idx < corners.pixels.size(); ++idx) {
         if (valid[idx] == true) {
             refinement_corners.pixels.emplace_back(corners.pixels[idx]);
             refinement_corners.radius.emplace_back(corners.radius[idx]);
+            refinement_corners.edge_directions.emplace_back(raw_orientations[idx]);
         }
     }
     corners = std::move(refinement_corners);
@@ -1153,8 +1212,8 @@ std::optional<cv::Point2d> ChessboardDetector::full_refinement_corner(
 
         for (int row = 0; row < 2 * r + 1; ++row) {
             for (int col = 0; col < 2 * r + 1; ++col) {
-                double dx = grad_x.at<double>(row, col);
-                double dy = grad_y.at<double>(row, col);
+                double dx = grad_x_patch.at<double>(row, col);
+                double dy = grad_y_patch.at<double>(row, col);
                 double grad = std::sqrt(dx * dx + dy * dy);
                 if (grad < 0.1) {
                     continue;
@@ -1231,7 +1290,7 @@ std::optional<cv::Point2d> ChessboardDetector::full_refinement_corner(
 double ChessboardDetector::get_corner_score(
     const cv::Mat &patch, const cv::Mat &grad_patch, std::array<cv::Point2d, 2> &edge_direction
 ) const {
-    double center = (patch.cols - 1) / 2;
+    double center = static_cast<double>((patch.cols - 1)) / 2;
     cv::Mat filter = cv::Mat::ones(patch.size(), CV_64F) * -1;
     for (int i = 0; i < patch.cols; ++i) {
         for (int j = 0; j < patch.rows; ++j) {
@@ -1250,6 +1309,11 @@ double ChessboardDetector::get_corner_score(
         }
     }
 
+    // double min_val, max_val;
+    // cv::minMaxLoc(patch, &min_val, &max_val);
+    // std::cout << "Patch values: min=" << min_val << " max=" << max_val << " range=" << max_val - min_val <<
+    // std::endl;
+
     cv::Scalar mean, std;
     cv::meanStdDev(filter, mean, std);
     filter = (filter - mean[0]) / std[0];
@@ -1259,6 +1323,11 @@ double ChessboardDetector::get_corner_score(
     double score_gradient = cv::sum(grad_patch_norm.mul(filter))[0];
     score_gradient = std::max(score_gradient / (patch.cols * patch.rows - 1), 0.);
 
+    // double a1 = std::atan2(edge_direction[0].y, edge_direction[0].x) * 180 / M_PI;
+    // double a2 = std::atan2(edge_direction[1].y, edge_direction[1].x) * 180 / M_PI;
+    // std::cerr << "Angles: " << a1 << "°, " << a2 << "°" << std::endl;
+    // std::cerr << "Difference: " << std::abs(a1 - a2) << "°" << std::endl;
+
     std::pair<double, double> angle_pair(
         std::atan2(edge_direction[0].y, edge_direction[0].x), std::atan2(edge_direction[1].y, edge_direction[1].x)
     );
@@ -1266,25 +1335,31 @@ double ChessboardDetector::get_corner_score(
     size_t r = (patch.cols - 1) / 2;
     CorrelationTemplates correlation_template(r, std::move(angle_pair));
 
-    double q1 = cv::sum(patch.mul(correlation_template.top_left))[0];
-    double q2 = cv::sum(patch.mul(correlation_template.top_right))[0];
+    double q1 = cv::sum(patch.mul(correlation_template.top_right))[0];
+    double q2 = cv::sum(patch.mul(correlation_template.top_left))[0];
     double q3 = cv::sum(patch.mul(correlation_template.bottom_left))[0];
     double q4 = cv::sum(patch.mul(correlation_template.bottom_right))[0];
 
     double response_mean = (q1 + q2 + q3 + q4) / 4;
 
-    // case 1: quadrants 1&2 are white, quadrants 3&4 are black
-    double white_score = cv::min(q1, q4) - response_mean;
-    double black_score = response_mean - cv::max(q2, q3);
+    // case 1: quadrants 1&3 are white, quadrants 2&4 are black
+    double white_score = cv::min(q1, q3) - response_mean;
+    double black_score = response_mean - cv::min(q2, q4);
     double score_case1 = cv::min(white_score, black_score);
 
-    // case 2: quadrants 3&4 are white, quadrants 1&2 are black
-    white_score = response_mean - cv::max(q1, q4);
-    black_score = cv::min(q2, q3) - response_mean;
+    // case 2: quadrants 1&3 are black, quadrants 2&4 are white
+    white_score = response_mean - cv::min(q1, q3);
+    black_score = cv::min(q2, q4) - response_mean;
     double score_case2 = cv::min(white_score, black_score);
 
     double score_intensity = std::max(std::max(score_case1, score_case2), 0.);
 
+    // std::mutex m;
+    // std::lock_guard<std::mutex> lock(m);
+    // std::cerr << "Corner 0: G=" << score_gradient << " I=" << score_intensity << std::endl;
+
+    // std::cerr << "q1=" << q1 << " q2=" << q2 << " q3=" << q3 << " q4=" << q4 << " mean=" << response_mean <<
+    // std::endl;
     return score_gradient * score_intensity;
 }
 
@@ -1295,6 +1370,9 @@ void ChessboardDetector::calculate_corners_score(
     cv::Mat &grad_img = grad_set.grad_img;
     int width = gray.cols;
     int height = gray.rows;
+
+    std::cout << corners.score.size() << corners.pixels.size() << corners.edge_directions.size()
+              << corners.radius.size() << std::endl;
 
     ChessboardCorners final_corners;
     std::vector<bool> valid(corners.pixels.size(), false);
@@ -1316,10 +1394,13 @@ void ChessboardDetector::calculate_corners_score(
             grad_img_patch = grad_img_patch.mul(grad_masks[r]);
 
             double score = get_corner_score(gray_patch, grad_img_patch, corners.edge_directions[idx]);
-            if (score >= params.score_threshold) {
+            if (score > params.score_threshold) {
                 valid[idx] = true;
                 corners.score[idx] = score;
+            } else {
+                corners.score[idx] = 0.0;
             }
+            // valid[idx] = true;
         }
     });
 
@@ -1548,11 +1629,11 @@ void ChessboardDetector::filter_board(
     while (!proposal.empty()) {
         cv::Point3i maxE_pos = board_energy(corners, board);
         double p_energy = board.energy[maxE_pos.y][maxE_pos.x][maxE_pos.z];
-        std::cout << std::setprecision(15) << "energy " << energy << std::endl;
-        std::cout << std::setprecision(15) << "p_energy " << p_energy << std::endl;
-        std::cout << "=== FILTER BOARD ===" << std::endl;
-        std::cout << "proposal.size() = " << proposal.size() << std::endl;
-        std::cout << "maxE_pos = (" << maxE_pos.x << "," << maxE_pos.y << "," << maxE_pos.z << ")" << std::endl;
+        // std::cout << std::setprecision(15) << "energy " << energy << std::endl;
+        // std::cout << std::setprecision(15) << "p_energy " << p_energy << std::endl;
+        // std::cout << "=== FILTER BOARD ===" << std::endl;
+        // std::cout << "proposal.size() = " << proposal.size() << std::endl;
+        // std::cout << "maxE_pos = (" << maxE_pos.x << "," << maxE_pos.y << "," << maxE_pos.z << ")" << std::endl;
         if (p_energy <= energy + EPSILON) {
             energy = p_energy;
             break;
@@ -1590,9 +1671,9 @@ void ChessboardDetector::filter_board(
             }
         }
 
-        std::cout << "worst_idx = " << worst_idx << std::endl;
-        std::cout << "removing corner at board grid (" << maxE_pos.y << "," << maxE_pos.x << ")" << std::endl;
-        std::cout << "global corner index = " << board.idx[maxE_pos.y][maxE_pos.x] << std::endl;
+        //         std::cout << "worst_idx = " << worst_idx << std::endl;
+        //         std::cout << "removing corner at board grid (" << maxE_pos.y << "," << maxE_pos.x << ")" <<
+        //         std::endl; std::cout << "global corner index = " << board.idx[maxE_pos.y][maxE_pos.x] << std::endl;
 
         proposal.erase(proposal.begin() + worst_idx);
         used[board.idx[maxE_pos.y][maxE_pos.x]] = false;
@@ -2032,8 +2113,8 @@ ChessboardDetector::boards_from_corners(const cv::Mat &img, const ChessboardCorn
                 if (grow_status == GrowStatus::FAILED) {
                     continue;
                 }
-                std::cout << "grow_status=" << static_cast<int>(grow_status) << " proposal.size=" << proposal.size()
-                          << std::endl;
+                // std::cout << "grow_status=" << static_cast<int>(grow_status) << " proposal.size=" << proposal.size()
+                //           << std::endl;
 
                 filter_board(corners, used, board, proposal, energy);
 

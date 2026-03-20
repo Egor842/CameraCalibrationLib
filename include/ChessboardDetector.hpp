@@ -15,7 +15,7 @@ struct ChessboardDetectorParams {
     double score_threshold{0.01};     // threshold corners score
     bool handle_occlusions{true};     // handle occlusions in board
     bool strict_board_grow{true};     // only precision predictions candidates in board
-    bool precision_accuracy{false};
+    bool precision_accuracy{true};
     bool overlay{false};              // allow angles according to national boards
     std::vector<double> scales{};
     std::vector<size_t> radius{5, 7}; // search radii for corner detection
@@ -72,10 +72,10 @@ class ChessboardDetector {
 private:
     ChessboardDetectorParams params;
     struct CorrelationTemplates {
-        cv::Mat top_left;     // Q1 (-,-)
-        cv::Mat bottom_right; // Q3 (+,+)
-        cv::Mat top_right;    // Q2 (-,+)
-        cv::Mat bottom_left;  // Q4 (+,-)
+        cv::Mat top_right;    // Q1 (+,+)
+        cv::Mat top_left;     // Q2 (-,+)
+        cv::Mat bottom_left;  // Q3 (-,-)
+        cv::Mat bottom_right; // Q4 (+,-)
         size_t template_radius;
         CorrelationTemplates(size_t r, std::pair<double, double> angle_pair);
     };
@@ -125,9 +125,7 @@ public:
     ChessboardDetector() : params() {
         create_templates_vec();
         create_grad_masks();
-        if (params.scales.empty()) {
-            params.scales = {0.5, 1.0, 2.0};
-        }
+        params.scales = {0.5, 1.0, 2.0};
     }
     ~ChessboardDetector() = default;
 
