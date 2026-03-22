@@ -1,9 +1,8 @@
 #include "../include/ChessboardDetector.hpp"
-#include <mutex>
+#include <cstdint>
 #include <opencv2/core/hal/hal.hpp>
 #include <opencv2/highgui.hpp>
 #include <random>
-#include <thread>
 #include <utility>
 
 
@@ -12,6 +11,36 @@ namespace ccl {
 
 constexpr double EPSILON = 1e-6;
 constexpr double DOUBLE_MAX = std::numeric_limits<double>::max();
+
+
+std::vector<cv::Point3d> Chessboard::matches_points(const std::vector<cv::Point3d> &points) const noexcept {
+    std::vector<cv::Point3d> matches;
+
+    if (full_detected) {
+        return points;
+    }
+
+    for (size_t idx = 0; idx < pixels.size(); idx++) {
+        if (pixels[idx].has_value()) {
+            matches.push_back(points[idx]);
+        }
+    }
+
+    return matches;
+}
+
+
+int ChessboardDetector::RawBoard::num_corners() const noexcept {
+    int num = 0;
+    for (const auto &row : idx) {
+        for (int jdx : row) {
+            if (jdx != -2) {
+                num++;
+            }
+        }
+    }
+    return num;
+}
 
 
 ChessboardDetector::GradientSet::GradientSet(const cv::Mat &gray) : GradientSet(gray.size(), gray.type()) {
@@ -48,6 +77,7 @@ ChessboardDetector::GradientSet::GradientSet(const cv::Mat &gray) : GradientSet(
 }
 
 
+// for debug
 void plot_corners(const cv::Mat &img, const std::vector<cv::Point2d> &corners, const char *str) {
     cv::Mat img_show;
     if (img.channels() != 3) {
@@ -64,8 +94,9 @@ void plot_corners(const cv::Mat &img, const std::vector<cv::Point2d> &corners, c
 }
 
 
+// for debug
 void visualize_corners_with_directions(
-    const cv::Mat &img, const ChessboardCorners &corners, const std::string &winname
+    const cv::Mat &img, const ChessboardDetector::ChessboardCorners &corners, const std::string &winname
 ) {
     cv::Mat img_show;
     if (img.channels() == 3) {
@@ -113,7 +144,7 @@ std::vector<Chessboard> ChessboardDetector::detect(const cv::Mat &img) const {
         gray_images_pyramid.emplace_back(gray_scale, scale);
     }
 
-    ccl::ChessboardCorners corners;
+    ChessboardCorners corners;
     GradientSet gradient_set(gray);
 
     for (auto &pyramid_element : gray_images_pyramid) {
@@ -128,50 +159,76 @@ std::vector<Chessboard> ChessboardDetector::detect(const cv::Mat &img) const {
         }
 
         auto new_corners = get_initial_corners(gray_image);
-        // plot_corners(img, new_corners.pixels, "INIT");
-        // std::cout << new_corners.pixels.size() << std::endl;
 
         raw_refinement(gray_image, curr_gradient_set, new_corners);
 
         new_corners = std::move(filter_corners(gray_image, curr_gradient_set, new_corners));
-        // std::cout << new_corners.pixels.size() << std::endl;
 
         refine_corners(curr_gradient_set, new_corners);
-        // std::cout << new_corners.pixels.size() << std::endl;
 
         merge_raw_corners(corners, new_corners, scale);
-
-        // plot_corners(img, new_corners.pixels, "merge INIT");
-
-        // std::cout << "ggg" << std::endl;
     }
-
-    // std::cout << corners.pixels.size() << std::endl;
-    // plot_corners(img, corners.pixels, "after INIT");
-
-    // visualize_corners_with_directions(img, corners, "directions before polyfit");
 
     if (params.polynomial_fit == true) {
         polynomial_fit(gray, corners, params.polynomial_fit_kernel_size / 2);
     }
 
-    // visualize_corners_with_directions(img, corners, "directions after polyfit");
-
-    // plot_corners(img, corners.pixels, "GG");
-
     calculate_corners_score(gray, gradient_set, corners);
 
-    // plot_corners(img, corners.pixels, "123");
+    auto raw_boards = std::move(boards_from_corners(gray, corners));
+    std::vector<Chessboard> chessboards;
 
-    auto boards = std::move(boards_from_corners(gray, corners));
 
-    for (auto &board : boards) {
-        board.update_corners(corners);
-        // plot_corners(img, board.pixels, "res");
+    // cv::Mat display = img.clone();
+    // plot_corners(display, corners.pixels, "gg");
+    // display = img.clone();
+    // visualize_corners_with_directions(display, corners, "ggg");
+    for (auto &board : raw_boards) {
+        int offset = 1;
+        int real_height = board.idx.size() - 2 * offset;
+        int real_width = board.idx[0].size() - 2 * offset;
+
+        std::vector<std::optional<cv::Point2d>> pixels;
+        bool full_detected = true;
+
+        for (int y = offset; y <= real_height; ++y) {
+            for (int x = offset; x <= real_width; ++x) {
+                int idx = board.idx[y][x];
+                if (idx >= 0) {
+                    pixels.push_back(corners.pixels[idx]);
+                } else {
+                    pixels.push_back(std::nullopt);
+                    full_detected = false;
+                }
+            }
+        }
+
+        if (real_width < real_height) {
+            int m = real_height;
+            int n = real_width;
+
+            std::vector<std::optional<cv::Point2d>> new_pixels(n * m);
+
+            for (int old_row = 0; old_row < m; ++old_row) {
+                for (int old_col = 0; old_col < n; ++old_col) {
+                    int old_idx = old_row * n + old_col;
+
+                    int new_row = n - 1 - old_col;
+                    int new_col = old_row;
+                    int new_idx = new_row * m + new_col;
+
+                    new_pixels[new_idx] = pixels[old_idx];
+                }
+            }
+
+            pixels = std::move(new_pixels);
+            std::swap(real_width, real_height);
+        }
+
+        chessboards.emplace_back(std::move(pixels), cv::Size(real_width, real_height), full_detected);
     }
 
-    // cv::destroyAllWindows();
-    return boards;
+    return chessboards;
 }
 
 
@@ -306,7 +363,7 @@ void ChessboardDetector::normalize(cv::Mat &img) const {
 }
 
 
-ChessboardCorners ChessboardDetector::get_initial_corners(const cv::Mat &gray) const {
+ChessboardDetector::ChessboardCorners ChessboardDetector::get_initial_corners(const cv::Mat &gray) const {
     ChessboardCorners corners;
 
     cv::Mat corner_response = cv::Mat::zeros(gray.size(), CV_64F);
@@ -408,7 +465,7 @@ std::vector<std::pair<int, double>> ChessboardDetector::meanshift(const std::vec
         return modes;
     }
 
-    std::vector<bool> visited(hist_size, 0);
+    std::vector<uint8_t> visited(hist_size, 0);
     for (int start_bin = 0; start_bin < hist_size; start_bin++) {
         int current_bin = start_bin;
         if (!visited[current_bin]) {
@@ -444,14 +501,14 @@ std::vector<std::pair<int, double>> ChessboardDetector::meanshift(const std::vec
 };
 
 
-ChessboardCorners
+ChessboardDetector::ChessboardCorners
 ChessboardDetector::filter_corners(const cv::Mat &gray, const GradientSet &grad_set, ChessboardCorners &corners) const {
     const cv::Mat &grad_img = grad_set.grad_img;
     const cv::Mat &angle_img = grad_set.angle_img;
 
     int width = gray.cols, height = gray.rows;
     ChessboardCorners filtred_corners;
-    std::vector<bool> valid(corners.pixels.size(), false);
+    std::vector<uint8_t> valid(corners.pixels.size(), false);
 
     std::vector<double> cos_v(filter_params.circle_size);
     std::vector<double> sin_v(filter_params.circle_size);
@@ -924,7 +981,7 @@ void ChessboardDetector::polynomial_fit(const cv::Mat &gray, ChessboardCorners &
     int width = gray.cols;
     int height = gray.rows;
 
-    std::vector<bool> valid(corners.pixels.size(), false);
+    std::vector<uint8_t> valid(corners.pixels.size(), false);
     ChessboardCorners fit_corners;
 
     auto cone_filter = create_cone_filter(r);
@@ -1077,7 +1134,7 @@ void ChessboardDetector::refine_corners(GradientSet &grad_set, ChessboardCorners
     int width = grad_x.cols, height = grad_x.rows;
     std::vector<cv::Point2d> corners_out_p, corners_out_v1, corners_out_v2;
     std::vector<size_t> corners_out_r;
-    std::vector<bool> valid(corners.pixels.size(), false);
+    std::vector<uint8_t> valid(corners.pixels.size(), false);
 
     refinement_corners.edge_directions.resize(corners.pixels.size());
 
@@ -1371,11 +1428,8 @@ void ChessboardDetector::calculate_corners_score(
     int width = gray.cols;
     int height = gray.rows;
 
-    std::cout << corners.score.size() << corners.pixels.size() << corners.edge_directions.size()
-              << corners.radius.size() << std::endl;
-
     ChessboardCorners final_corners;
-    std::vector<bool> valid(corners.pixels.size(), false);
+    std::vector<uint8_t> valid(corners.pixels.size(), false);
     corners.score.resize(corners.pixels.size());
 
     cv::parallel_for_(cv::Range(0, corners.pixels.size()), [&](const cv::Range &range) -> void {
@@ -1418,7 +1472,7 @@ void ChessboardDetector::calculate_corners_score(
 
 
 int ChessboardDetector::find_neighbor_along_dir(
-    const ChessboardCorners &corners, const std::vector<bool> &used, int idx, const cv::Point2d &target_dir
+    const ChessboardCorners &corners, const std::vector<uint8_t> &used, int idx, const cv::Point2d &target_dir
 ) const {
     std::vector<double> dists(corners.pixels.size(), DOUBLE_MAX);
 
@@ -1444,13 +1498,13 @@ int ChessboardDetector::find_neighbor_along_dir(
 }
 
 
-std::optional<Chessboard>
-ChessboardDetector::init_board(const ChessboardCorners &corners, std::vector<bool> &used, int idx) const {
+std::optional<ChessboardDetector::RawBoard>
+ChessboardDetector::init_board(const ChessboardCorners &corners, std::vector<uint8_t> &used, int idx) const {
     if (corners.pixels.size() < 9) {
         return std::nullopt;
     }
 
-    Chessboard board;
+    RawBoard board;
     board.idx.assign(3, std::vector<int>(3, -1));
 
     auto dir_first = corners.edge_first(idx);
@@ -1554,7 +1608,7 @@ ChessboardDetector::init_board(const ChessboardCorners &corners, std::vector<boo
 }
 
 
-cv::Point3i ChessboardDetector::board_energy(const ChessboardCorners &corners, Chessboard &board) const {
+cv::Point3i ChessboardDetector::board_energy(const ChessboardCorners &corners, RawBoard &board) const {
     double E_corners = -1.0 * board.num_corners();
 
     double max_E_struct = std::numeric_limits<double>::min();
@@ -1596,7 +1650,7 @@ cv::Point3i ChessboardDetector::board_energy(const ChessboardCorners &corners, C
 }
 
 
-double ChessboardDetector::find_minE(const Chessboard &board, const cv::Point2i &p) const {
+double ChessboardDetector::find_minE(const RawBoard &board, const cv::Point2i &p) const {
     struct Check {
         int dx, dy, dir;
     };
@@ -1621,8 +1675,8 @@ double ChessboardDetector::find_minE(const Chessboard &board, const cv::Point2i 
 
 void ChessboardDetector::filter_board(
     const ChessboardCorners &corners,
-    std::vector<bool> &used,
-    Chessboard &board,
+    std::vector<uint8_t> &used,
+    RawBoard &board,
     std::vector<cv::Point2i> &proposal,
     double &energy
 ) const {
@@ -1722,7 +1776,7 @@ std::vector<cv::Point2d> ChessboardDetector::predict_corners(
 
 std::vector<int> ChessboardDetector::predict_board_corners(
     const ChessboardCorners &corners,
-    std::vector<bool> &used,
+    std::vector<uint8_t> &used,
     std::vector<int> &p1,
     std::vector<int> &p2,
     std::vector<int> &p3
@@ -1798,7 +1852,7 @@ std::vector<int> ChessboardDetector::predict_board_corners(
 }
 
 
-bool ChessboardDetector::add_board_bound(Chessboard &board, int direction) const {
+bool ChessboardDetector::add_board_bound(RawBoard &board, int direction) const {
     int rows = board.idx.size(), cols = board.idx[0].size();
 
     auto need_to_grow = [&](auto &&has_corner) {
@@ -1880,9 +1934,9 @@ bool ChessboardDetector::add_board_bound(Chessboard &board, int direction) const
 
 void ChessboardDetector::handle_occlusions(
     const ChessboardCorners &corners,
-    Chessboard &board,
+    RawBoard &board,
     std::vector<cv::Point2i> &proposal,
-    std::vector<bool> &used,
+    std::vector<uint8_t> &used,
     int direction
 ) const {
     int cols = board.idx[0].size();
@@ -1952,9 +2006,9 @@ void ChessboardDetector::handle_occlusions(
 
 bool ChessboardDetector::grow_board_dir(
     const ChessboardCorners &corners,
-    Chessboard &board,
+    RawBoard &board,
     std::vector<cv::Point2i> &proposal,
-    std::vector<bool> &used,
+    std::vector<uint8_t> &used,
     int direction
 ) const {
     int cols = board.idx[0].size();
@@ -2030,8 +2084,8 @@ bool ChessboardDetector::grow_board_dir(
 
 ChessboardDetector::GrowStatus ChessboardDetector::grow_board(
     const ChessboardCorners &corners,
-    std::vector<bool> &used,
-    Chessboard &board,
+    std::vector<uint8_t> &used,
+    RawBoard &board,
     std::vector<cv::Point2i> &proposal,
     int direction
 ) const {
@@ -2061,15 +2115,15 @@ ChessboardDetector::GrowStatus ChessboardDetector::grow_board(
 }
 
 
-std::vector<Chessboard>
+std::vector<ChessboardDetector::RawBoard>
 ChessboardDetector::boards_from_corners(const cv::Mat &img, const ChessboardCorners &corners) const {
-    std::vector<Chessboard> boards;
-    std::vector<bool> used(corners.pixels.size(), false);
+    std::vector<RawBoard> boards;
+    std::vector<uint8_t> used(corners.pixels.size(), false);
 
     int start = 0;
     if (!params.overlay) {
-        std::random_device rd;
-        std::mt19937 gen(rd());
+        static thread_local std::random_device rd;
+        static thread_local std::mt19937 gen(rd());
         std::uniform_int_distribution<> distrib(0, corners.pixels.size() - 1);
         start = distrib(gen);
     }
@@ -2087,7 +2141,7 @@ ChessboardDetector::boards_from_corners(const cv::Mat &img, const ChessboardCorn
             continue;
         }
 
-        Chessboard board = board_opt.value();
+        RawBoard board = board_opt.value();
 
         cv::Point3i maxE_pos = board_energy(corners, board);
         double energy = board.energy[maxE_pos.y][maxE_pos.x][maxE_pos.z];
@@ -2185,12 +2239,12 @@ ChessboardDetector::boards_from_corners(const cv::Mat &img, const ChessboardCorn
             }
 
             if (is_better) {
-                std::vector<bool> keep(boards.size(), true);
+                std::vector<uint8_t> keep(boards.size(), true);
                 for (const auto &[idx, _] : overlaps) {
                     keep[idx] = false;
                 }
 
-                std::vector<Chessboard> filtered_boards;
+                std::vector<RawBoard> filtered_boards;
                 for (int idx = 0; idx < boards.size(); ++idx) {
                     if (keep[idx]) {
                         filtered_boards.push_back(boards[idx]);
@@ -2208,6 +2262,4 @@ ChessboardDetector::boards_from_corners(const cv::Mat &img, const ChessboardCorn
 
     return boards;
 }
-
-
 }; // namespace ccl

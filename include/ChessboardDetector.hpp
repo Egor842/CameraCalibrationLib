@@ -1,4 +1,6 @@
 #pragma once
+#include "base_classes.hpp"
+#include <cstdint>
 #include <opencv2/opencv.hpp>
 #include <optional>
 
@@ -22,49 +24,25 @@ struct ChessboardDetectorParams {
 };
 
 
-struct ChessboardCorners {
-    std::vector<cv::Point2d> pixels;
-    std::vector<size_t> radius;
-    std::vector<double> score;
-    std::vector<std::array<cv::Point2d, 2>> edge_directions;
+class Chessboard : public PatternState {
+public:
+    Chessboard() = delete;
+    Chessboard(
+        const std::vector<std::optional<cv::Point2d>> &pixels, const PatternSize &size, const bool full_detected = false
+    )
+        : PatternState{pixels, size, full_detected} {};
+    Chessboard(std::vector<std::optional<cv::Point2d>> &&pixels, PatternSize &&size, bool &&full_detected = false)
+        : PatternState{std::move(pixels), std::move(size), full_detected} {};
+    ~Chessboard() = default;
 
-    auto edge_first(size_t idx) const {
-        return edge_directions[idx][0];
-    }
-    auto edge_second(size_t idx) const {
-        return edge_directions[idx][1];
-    }
-};
-
-
-struct Chessboard {
-    std::vector<std::vector<int>> idx;
-    std::vector<std::vector<std::vector<double>>> energy;
-    std::vector<cv::Point2d> pixels;
-
-    void update_corners(const ChessboardCorners &all_corners) {
-        pixels.clear();
-
-        for (const auto &row : idx) {
-            for (const auto &pixel_idx : row) {
-                if (pixel_idx >= 0) {
-                    pixels.push_back(all_corners.pixels[pixel_idx]);
-                }
-            }
-        }
+    const std::vector<std::optional<cv::Point2d>> &get_pixels_vec() const noexcept {
+        return pixels;
+    };
+    const PatternSize get_size() const noexcept {
+        return size;
     }
 
-    int num_corners() {
-        int num = 0;
-        for (const auto &row : idx) {
-            for (int jdx : row) {
-                if (jdx != -2) {
-                    num++;
-                }
-            }
-        }
-        return num;
-    }
+    std::vector<cv::Point3d> matches_points(const std::vector<cv::Point3d> &points) const noexcept;
 };
 
 
@@ -113,6 +91,27 @@ public:
 
         explicit GradientSet(const cv::Mat &gray);
     };
+    struct RawBoard {
+        std::vector<std::vector<int>> idx;
+        std::vector<std::vector<std::vector<double>>> energy;
+        // std::vector<cv::Point2d> pixels;
+
+        int num_corners() const noexcept;
+    };
+    struct ChessboardCorners {
+        std::vector<cv::Point2d> pixels;
+        std::vector<size_t> radius;
+        std::vector<double> score;
+        std::vector<std::array<cv::Point2d, 2>> edge_directions;
+
+        auto edge_first(size_t idx) const {
+            return edge_directions[idx][0];
+        }
+        auto edge_second(size_t idx) const {
+            return edge_directions[idx][1];
+        }
+    };
+
 
 public:
     ChessboardDetector(const ChessboardDetectorParams &params) : params(params) {
@@ -174,54 +173,54 @@ private:
 
     void calculate_corners_score(const cv::Mat &gray, GradientSet &grad_set, ChessboardCorners &corners) const;
 
-    [[nodiscard]] std::optional<Chessboard>
-    init_board(const ChessboardCorners &corners, std::vector<bool> &used, int idx) const;
+    [[nodiscard]] std::optional<RawBoard>
+    init_board(const ChessboardCorners &corners, std::vector<uint8_t> &used, int idx) const;
 
     [[nodiscard]] int find_neighbor_along_dir(
-        const ChessboardCorners &corners, const std::vector<bool> &used, int idx, const cv::Point2d &target_dir
+        const ChessboardCorners &corners, const std::vector<uint8_t> &used, int idx, const cv::Point2d &target_dir
     ) const;
 
-    [[nodiscard]] cv::Point3i board_energy(const ChessboardCorners &corners, Chessboard &board) const;
+    [[nodiscard]] cv::Point3i board_energy(const ChessboardCorners &corners, RawBoard &board) const;
 
-    [[nodiscard]] double find_minE(const Chessboard &board, const cv::Point2i &p) const;
+    [[nodiscard]] double find_minE(const RawBoard &board, const cv::Point2i &p) const;
 
     void filter_board(
         const ChessboardCorners &corners,
-        std::vector<bool> &used,
-        Chessboard &board,
+        std::vector<uint8_t> &used,
+        RawBoard &board,
         std::vector<cv::Point2i> &proposal,
         double &energy
     ) const;
 
     [[nodiscard]] GrowStatus grow_board(
         const ChessboardCorners &corners,
-        std::vector<bool> &used,
-        Chessboard &board,
+        std::vector<uint8_t> &used,
+        RawBoard &board,
         std::vector<cv::Point2i> &proposal,
         int direction
     ) const;
 
     void handle_occlusions(
         const ChessboardCorners &corners,
-        Chessboard &board,
+        RawBoard &board,
         std::vector<cv::Point2i> &proposal,
-        std::vector<bool> &used,
+        std::vector<uint8_t> &used,
         int direction
     ) const;
 
     [[nodiscard]] bool grow_board_dir(
         const ChessboardCorners &corners,
-        Chessboard &board,
+        RawBoard &board,
         std::vector<cv::Point2i> &proposal,
-        std::vector<bool> &used,
+        std::vector<uint8_t> &used,
         int direction
     ) const;
 
-    [[nodiscard]] bool add_board_bound(Chessboard &board, int direction) const;
+    [[nodiscard]] bool add_board_bound(RawBoard &board, int direction) const;
 
     [[nodiscard]] std::vector<int> predict_board_corners(
         const ChessboardCorners &corners,
-        std::vector<bool> &used,
+        std::vector<uint8_t> &used,
         std::vector<int> &p1,
         std::vector<int> &p2,
         std::vector<int> &p3
@@ -234,7 +233,6 @@ private:
         const std::vector<int> &near_indices
     ) const;
 
-    [[nodiscard]] std::vector<Chessboard>
-    boards_from_corners(const cv::Mat &img, const ChessboardCorners &corners) const;
+    [[nodiscard]] std::vector<RawBoard> boards_from_corners(const cv::Mat &img, const ChessboardCorners &corners) const;
 };
 }; // namespace ccl
