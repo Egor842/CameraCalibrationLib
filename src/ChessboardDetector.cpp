@@ -225,6 +225,14 @@ std::vector<Chessboard> ChessboardDetector::detect(const cv::Mat &img) const {
             std::swap(real_width, real_height);
         }
 
+        // display = img.clone();
+        // std::vector<cv::Point2d> gg;
+        // for (const auto &pixel : pixels) {
+        //     if (pixel.has_value()) {
+        //         gg.push_back(pixel.value());
+        //     }
+        // }
+        // plot_corners(display, gg, "gg");
         chessboards.emplace_back(std::move(pixels), cv::Size(real_width, real_height), full_detected);
     }
 

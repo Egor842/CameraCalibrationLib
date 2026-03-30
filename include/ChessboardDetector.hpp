@@ -124,7 +124,7 @@ public:
     ChessboardDetector() : params() {
         create_templates_vec();
         create_grad_masks();
-        params.scales = {0.5, 1.0, 2.0};
+        params.scales = {0.5, 1.0};
     }
     ~ChessboardDetector() = default;
 
