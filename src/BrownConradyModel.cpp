@@ -1,5 +1,6 @@
 #include "../include/BrownConradyModel.hpp"
 #include <fstream>
+#include <memory>
 #include <yaml-cpp/yaml.h>
 
 
@@ -121,15 +122,21 @@ bool BrownConradyDistortion::set_coefficients(const std::vector<double> &coeffs)
 }
 
 
-BrownConradyCamera::BrownConradyCamera(
-    const IntrisicParams &intrisic, const ExternalParams &external, const BrownConradyDistortion &dist
+BrownConradyModel::BrownConradyModel(
+    const IntrinsicParams &intrisic, const ExtrinsicParams &external, const BrownConradyDistortion &dist
 )
     : CameraModel(intrisic, external, std::make_unique<BrownConradyDistortion>(dist)) {}
 
 
-BrownConradyCamera::BrownConradyCamera(
-    const IntrisicParams &intrinsic,
-    const ExternalParams &external,
+BrownConradyModel::BrownConradyModel(
+    const IntrinsicParams &intrisic, const ExtrinsicParams &external, std::unique_ptr<BrownConradyDistortion> dist
+)
+    : CameraModel(intrisic, external, std::move(dist)) {}
+
+
+BrownConradyModel::BrownConradyModel(
+    const IntrinsicParams &intrinsic,
+    const ExtrinsicParams &external,
     double k1,
     double k2,
     double p1,
@@ -139,7 +146,7 @@ BrownConradyCamera::BrownConradyCamera(
     : CameraModel(intrinsic, external, std::make_unique<BrownConradyDistortion>(k1, k2, p1, p2, k3)) {}
 
 
-std::vector<cv::Point2d> BrownConradyCamera::project_points(const std::vector<cv::Point3d> &points) const noexcept {
+std::vector<cv::Point2d> BrownConradyModel::project_points(const std::vector<cv::Point3d> &points) const noexcept {
     std::vector<cv::Point2d> result;
     if (points.empty()) {
         return result;
@@ -176,7 +183,7 @@ std::vector<cv::Point2d> BrownConradyCamera::project_points(const std::vector<cv
 }
 
 
-void BrownConradyCamera::create_from_yaml(const std::string &yaml_path) {
+void BrownConradyModel::create_from_yaml(const std::string &yaml_path) {
     try {
         YAML::Node config = YAML::LoadFile(yaml_path);
         if (config["intrinsic"]) {
@@ -209,7 +216,7 @@ void BrownConradyCamera::create_from_yaml(const std::string &yaml_path) {
 }
 
 
-void BrownConradyCamera::save_to_yaml(const std::string &yaml_path) const {
+void BrownConradyModel::save_to_yaml(const std::string &yaml_path) const {
     YAML::Node config;
 
     config["intrinsic"]["fx"] = intrisic.fx;
@@ -247,43 +254,27 @@ void BrownConradyCamera::save_to_yaml(const std::string &yaml_path) const {
 }
 
 
-void BrownConradyCamera::set_intrinsic(const IntrisicParams &intrinsic) {
-    intrisic = intrinsic;
+std::unique_ptr<DistortionModel> BrownConradyModel::get_distortion() const noexcept {
+    if (!distortion) {
+        return nullptr;
+    }
+
+    const auto *brown_dist = dynamic_cast<const BrownConradyDistortion *>(distortion.get());
+    if (brown_dist) {
+        return std::make_unique<BrownConradyDistortion>(*brown_dist);
+    }
+
+    return nullptr;
 }
 
 
-void BrownConradyCamera::set_external(const ExternalParams &ext) {
-    external = ext;
-}
-
-
-void BrownConradyCamera::set_distortion(const BrownConradyDistortion &dist) {
-    distortion = std::make_unique<BrownConradyDistortion>(dist);
-}
-
-
-IntrisicParams &BrownConradyCamera::get_intrinsic_ref() {
-    return intrisic;
-}
-
-
-const IntrisicParams &BrownConradyCamera::get_intrinsic_ref() const {
-    return intrisic;
-}
-
-
-ExternalParams &BrownConradyCamera::get_external_ref() {
-    return external;
-}
-
-
-const ExternalParams &BrownConradyCamera::get_external_ref() const {
-    return external;
-}
-
-
-BrownConradyDistortion *BrownConradyCamera::get_distortion_ptr() const {
-    return dynamic_cast<BrownConradyDistortion *>(distortion.get());
+bool BrownConradyModel::set_distortion(std::unique_ptr<DistortionModel> dist) {
+    BrownConradyDistortion *brown_dist = dynamic_cast<BrownConradyDistortion *>(dist.get());
+    if (brown_dist) {
+        distortion = std::make_unique<BrownConradyDistortion>(*brown_dist);
+        return true;
+    }
+    return false;
 }
 
 

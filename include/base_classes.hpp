@@ -17,6 +17,8 @@ public:
     }
     PatternSize(const PatternSize &size) = default;
     PatternSize(PatternSize &&size) = default;
+    PatternSize &operator=(const PatternSize &size) = default;
+    PatternSize &operator=(PatternSize &&size) = default;
 
     cv::Size value() const noexcept {
         return size;

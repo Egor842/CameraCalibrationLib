@@ -12,6 +12,9 @@ namespace ccl {
 class DistortionModel {
 public:
     virtual ~DistortionModel() = default;
+    DistortionModel() = default;
+    DistortionModel(DistortionModel &&) = default;
+    DistortionModel(const DistortionModel &) = default;
 
     virtual void distort(double x, double y, double &xd, double &yd) const noexcept = 0;
     virtual void
@@ -23,55 +26,62 @@ public:
 };
 
 
-struct IntrisicParams {
+struct IntrinsicParams {
     double fx = 0.0, fy = 0.0;
     double cx = 0.0, cy = 0.0;
     double skew = 0.0;
 
-    IntrisicParams() = default;
-    IntrisicParams(double fx, double fy, double cx, double cy, double skew);
+    IntrinsicParams() = default;
+    IntrinsicParams(double fx, double fy, double cx, double cy, double skew);
 
     cv::Mat to_cv_mat() const;
     explicit operator cv::Mat() const;
     bool from_cv_mat(const cv::Mat &k);
     bool is_valid() const;
+
+    double fx_error(const IntrinsicParams &other) const noexcept;
+    double fy_error(const IntrinsicParams &other) const noexcept;
+    double cx_error(const IntrinsicParams &other) const noexcept;
+    double cy_error(const IntrinsicParams &other) const noexcept;
+    double skew_error(const IntrinsicParams &other) const noexcept;
 };
 
 
-struct ExternalParams {
+struct ExtrinsicParams {
     cv::Vec3d rvec;
     cv::Vec3d tvec;
 
-    ExternalParams();
-    ExternalParams(const cv::Vec3d &r, const cv::Vec3d &t);
-    ExternalParams(cv::Vec3d &&r, cv::Vec3d &&t);
+    ExtrinsicParams();
+    ExtrinsicParams(const cv::Vec3d &r, const cv::Vec3d &t);
+    ExtrinsicParams(cv::Vec3d &&r, cv::Vec3d &&t);
 
-    const double *rvec_data() const;
-    const double *tvec_data() const;
-    double *rvec_data();
-    double *tvec_data();
+    cv::Vec3d get_rvec() const;
+    cv::Vec3d get_tvec() const;
 
     cv::Mat rvec_mat() const;
     cv::Mat tvec_mat() const;
     cv::Matx33d rotation_matrix() const;
 
-    ExternalParams compose(const ExternalParams &other) const;
-    ExternalParams inverse() const;
+    ExtrinsicParams compose(const ExtrinsicParams &other) const;
+    ExtrinsicParams inverse() const;
     bool is_valid() const;
 
-    static std::optional<ExternalParams> create_from_mat(const cv::Mat &R, const cv::Mat &t);
+    static std::optional<ExtrinsicParams> create_from_mat(const cv::Mat &R, const cv::Mat &t);
+
+    double rvec_error(const ExtrinsicParams &other) const noexcept;
+    double tvec_error(const ExtrinsicParams &other) const noexcept;
 };
 
 
 class CameraModel {
 protected:
-    IntrisicParams intrisic;
-    ExternalParams external;
+    IntrinsicParams intrisic;
+    ExtrinsicParams external;
     std::unique_ptr<DistortionModel> distortion;
 
 public:
     CameraModel(
-        const IntrisicParams &intrisic, const ExternalParams &external, std::unique_ptr<DistortionModel> &&dist
+        const IntrinsicParams &intrisic, const ExtrinsicParams &external, std::unique_ptr<DistortionModel> dist
     );
     virtual ~CameraModel() = default;
 
@@ -79,9 +89,16 @@ public:
     virtual void create_from_yaml(const std::string &yaml_path) = 0;
     virtual void save_to_yaml(const std::string &yaml_path) const = 0;
 
-    IntrisicParams get_inrisic() const noexcept;
-    ExternalParams get_external() const noexcept;
-    auto get_distortion_coeffs() const noexcept;
+    IntrinsicParams get_intrisic() const noexcept;
+    ExtrinsicParams get_external() const noexcept;
+    virtual std::unique_ptr<DistortionModel> get_distortion() const noexcept = 0;
+    void set_external(const ExtrinsicParams &ext) {
+        external = ext;
+    }
+    void set_intrinsic(const IntrinsicParams &intr) {
+        intrisic = intr;
+    }
+    virtual bool set_distortion(std::unique_ptr<DistortionModel> dist) = 0;
 };
 
 
