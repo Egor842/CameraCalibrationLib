@@ -42,7 +42,8 @@ public:
         return size;
     }
 
-    std::vector<cv::Point3d> matches_points(const std::vector<cv::Point3d> &points) const noexcept;
+    std::pair<std::vector<cv::Point2d>, std::vector<cv::Point3d>>
+    matches_points(const std::vector<cv::Point3d> &points_3d) const noexcept;
 };
 
 
@@ -124,7 +125,7 @@ public:
     ChessboardDetector() : params() {
         create_templates_vec();
         create_grad_masks();
-        params.scales = {0.5, 1.0};
+        params.scales = {0.5, 1.0, 2.0};
     }
     ~ChessboardDetector() = default;
 

@@ -32,7 +32,7 @@ struct IntrinsicParams {
     double skew = 0.0;
 
     IntrinsicParams() = default;
-    IntrinsicParams(double fx, double fy, double cx, double cy, double skew);
+    IntrinsicParams(double fx, double fy, double cx, double cy, double skew = 0.0);
 
     cv::Mat to_cv_mat() const;
     explicit operator cv::Mat() const;
@@ -89,7 +89,7 @@ public:
     virtual void create_from_yaml(const std::string &yaml_path) = 0;
     virtual void save_to_yaml(const std::string &yaml_path) const = 0;
 
-    IntrinsicParams get_intrisic() const noexcept;
+    IntrinsicParams get_intrinsic() const noexcept;
     ExtrinsicParams get_external() const noexcept;
     virtual std::unique_ptr<DistortionModel> get_distortion() const noexcept = 0;
     void set_external(const ExtrinsicParams &ext) {

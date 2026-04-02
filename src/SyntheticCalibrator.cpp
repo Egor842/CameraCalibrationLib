@@ -409,7 +409,7 @@ SyntheticCalibrator::run(const std::unique_ptr<Calibrator> &calibrator, bool gen
     }
 
     result.compute_errors(
-        params_.camera_model->get_intrisic(),
+        params_.camera_model->get_intrinsic(),
         params_.camera_model->get_distortion()->get_coefficients(),
         true_extrinsics
     );

@@ -169,7 +169,7 @@ CameraModel::CameraModel(
       distortion(std::move(dist)) {}
 
 
-IntrinsicParams CameraModel::get_intrisic() const noexcept {
+IntrinsicParams CameraModel::get_intrinsic() const noexcept {
     return intrisic;
 }
 

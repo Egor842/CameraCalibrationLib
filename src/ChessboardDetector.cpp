@@ -13,16 +13,14 @@ constexpr double EPSILON = 1e-6;
 constexpr double DOUBLE_MAX = std::numeric_limits<double>::max();
 
 
-std::vector<cv::Point3d> Chessboard::matches_points(const std::vector<cv::Point3d> &points) const noexcept {
-    std::vector<cv::Point3d> matches;
-
-    if (full_detected) {
-        return points;
-    }
+std::pair<std::vector<cv::Point2d>, std::vector<cv::Point3d>>
+Chessboard::matches_points(const std::vector<cv::Point3d> &points_3d) const noexcept {
+    std::pair<std::vector<cv::Point2d>, std::vector<cv::Point3d>> matches;
 
     for (size_t idx = 0; idx < pixels.size(); idx++) {
         if (pixels[idx].has_value()) {
-            matches.push_back(points[idx]);
+            matches.first.push_back(pixels[idx].value());
+            matches.second.push_back(points_3d[idx]);
         }
     }
 
