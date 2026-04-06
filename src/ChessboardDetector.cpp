@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <opencv2/core/hal/hal.hpp>
 #include <opencv2/highgui.hpp>
+#include <opencv2/opencv.hpp>
 #include <random>
 #include <utility>
 
@@ -176,11 +177,10 @@ std::vector<Chessboard> ChessboardDetector::detect(const cv::Mat &img) const {
     auto raw_boards = std::move(boards_from_corners(gray, corners));
     std::vector<Chessboard> chessboards;
 
-
     // cv::Mat display = img.clone();
-    // plot_corners(display, corners.pixels, "gg");
+    // plot_corners(display, corners.pixels, "g");
     // display = img.clone();
-    // visualize_corners_with_directions(display, corners, "ggg");
+    // visualize_corners_with_directions(display, corners, "gg");
     for (auto &board : raw_boards) {
         int offset = 1;
         int real_height = board.idx.size() - 2 * offset;
@@ -230,9 +230,10 @@ std::vector<Chessboard> ChessboardDetector::detect(const cv::Mat &img) const {
         //         gg.push_back(pixel.value());
         //     }
         // }
-        // plot_corners(display, gg, "gg");
+        // plot_corners(display, gg, "ggg");
         chessboards.emplace_back(std::move(pixels), cv::Size(real_width, real_height), full_detected);
     }
+    cv::destroyAllWindows();
 
     return chessboards;
 }
@@ -731,69 +732,80 @@ ChessboardDetector::non_maximum_suppression(const cv::Mat &gray_image, int n, do
     int blocks_x = (roi.cols - n + step - 1) / step;
     int total_blocks = blocks_y * blocks_x;
 
+    // Вектор для сбора результатов из всех потоков (с защитой)
     std::vector<cv::Point2d> all_results;
-    cv::Mat result_mat = cv::Mat::zeros(cv::Size(roi.cols, roi.rows), CV_8U);
+    std::mutex result_mutex;
 
-    auto double_limit_min = -std::numeric_limits<double>::max();
-    parallel_for_(
-        cv::Range(0, total_blocks),
-        [&step, &roi, &result_mat, tau, n, double_limit_min, blocks_x, blocks_y](const cv::Range &range) {
-            for (int i = range.start; i < range.end; i++) {
-                int block_y = i / blocks_x;
-                int block_x = i % blocks_x;
+    parallel_for_(cv::Range(0, total_blocks), [&](const cv::Range &range) {
+        std::vector<cv::Point2d> local_points;
 
-                int start_y = block_y * step;
-                int start_x = block_x * step;
-                int end_y = std::min(start_y + n, roi.rows);
-                int end_x = std::min(start_x + n, roi.cols);
+        for (int i = range.start; i < range.end; i++) {
+            int block_y = i / blocks_x;
+            int block_x = i % blocks_x;
 
-                double max_brightness = double_limit_min;
-                cv::Point2i max_coord(-1, -1);
+            int start_y = block_y * step;
+            int start_x = block_x * step;
+            int end_y = std::min(start_y + n, roi.rows);
+            int end_x = std::min(start_x + n, roi.cols);
 
-                for (int y = start_y; y < end_y; y++) {
-                    for (int x = start_x; x < end_x; x++) {
-                        double brightness = roi.at<double>(y, x);
-                        if (brightness > max_brightness) {
-                            max_brightness = brightness;
-                            max_coord = cv::Point2i(x, y);
-                        }
+            double max_brightness = -std::numeric_limits<double>::max();
+            cv::Point2i max_coord(-1, -1);
+
+            for (int y = start_y; y < end_y; y++) {
+                for (int x = start_x; x < end_x; x++) {
+                    double brightness = roi.at<double>(y, x);
+                    if (brightness > max_brightness) {
+                        max_brightness = brightness;
+                        max_coord = cv::Point2i(x, y);
                     }
-                }
-
-                start_x = std::max(max_coord.x - n, 0);
-                start_y = std::max(max_coord.y - n, 0);
-                end_x = std::min(max_coord.x + n, roi.cols);
-                end_y = std::min(max_coord.y + n, roi.rows);
-
-                auto check_extented_roi = [&]() -> bool {
-                    if (max_brightness == double_limit_min) {
-                        return false;
-                    }
-                    for (int y = start_y; y < end_y; y++) {
-                        for (int x = start_x; x < end_x; x++) {
-                            double brightness = roi.at<double>(y, x);
-                            if (brightness > max_brightness) {
-                                return false;
-                            }
-                        }
-                    }
-                    return true;
-                };
-
-                if (check_extented_roi() && max_brightness >= tau) {
-                    result_mat.at<uint8_t>(max_coord) = 1;
                 }
             }
+
+            if (max_brightness < tau) {
+                continue;
+            }
+
+            // Расширенная проверка локального максимума
+            int check_start_x = std::max(max_coord.x - n, 0);
+            int check_start_y = std::max(max_coord.y - n, 0);
+            int check_end_x = std::min(max_coord.x + n, roi.cols);
+            int check_end_y = std::min(max_coord.y + n, roi.rows);
+
+            bool is_max = true;
+            for (int y = check_start_y; y < check_end_y && is_max; ++y) {
+                for (int x = check_start_x; x < check_end_x; ++x) {
+                    if (roi.at<double>(y, x) > max_brightness) {
+                        is_max = false;
+                        break;
+                    }
+                }
+            }
+
+            if (is_max) {
+                local_points.emplace_back(max_coord.x + margin, max_coord.y + margin);
+            }
         }
+
+        if (!local_points.empty()) {
+            std::lock_guard<std::mutex> lock(result_mutex);
+            all_results.insert(all_results.end(), local_points.begin(), local_points.end());
+        }
+    });
+
+    // Удаление возможных дубликатов (разные блоки могли вернуть одну точку)
+    std::sort(all_results.begin(), all_results.end(), [](const cv::Point2d &a, const cv::Point2d &b) {
+        return (a.x < b.x) || (a.x == b.x && a.y < b.y);
+    });
+    all_results.erase(
+        std::unique(
+            all_results.begin(),
+            all_results.end(),
+            [](const cv::Point2d &a, const cv::Point2d &b) {
+                return std::abs(a.x - b.x) < 1e-6 && std::abs(a.y - b.y) < 1e-6;
+            }
+        ),
+        all_results.end()
     );
-
-    for (int y = 0; y < result_mat.rows; y++) {
-        for (int x = 0; x < result_mat.cols; x++) {
-            if (result_mat.at<uint8_t>(y, x) == 1) {
-                all_results.emplace_back(cv::Point2d(x + margin, y + margin));
-            }
-        }
-    }
 
     return all_results;
 }
@@ -1662,7 +1674,7 @@ double ChessboardDetector::find_minE(const RawBoard &board, const cv::Point2i &p
     };
     // clang-format off
     std::vector<Check> checks = {
-        {0, 0, 0}, {0, 0, 1}, {0, 0, 2},
+        { 0, 0, 0}, { 0,  0, 1}, {0,  0, 2},
         {-1, 0, 0}, {-1, -1, 1}, {0, -1, 2},
         {-2, 0, 0}, {-2, -2, 1}, {0, -2, 2}
     };
@@ -1694,7 +1706,7 @@ void ChessboardDetector::filter_board(
         // std::cout << "=== FILTER BOARD ===" << std::endl;
         // std::cout << "proposal.size() = " << proposal.size() << std::endl;
         // std::cout << "maxE_pos = (" << maxE_pos.x << "," << maxE_pos.y << "," << maxE_pos.z << ")" << std::endl;
-        if (p_energy <= energy + EPSILON) {
+        if (p_energy <= energy) {
             energy = p_energy;
             break;
         }
@@ -1731,9 +1743,13 @@ void ChessboardDetector::filter_board(
             }
         }
 
-        //         std::cout << "worst_idx = " << worst_idx << std::endl;
-        //         std::cout << "removing corner at board grid (" << maxE_pos.y << "," << maxE_pos.x << ")" <<
-        //         std::endl; std::cout << "global corner index = " << board.idx[maxE_pos.y][maxE_pos.x] << std::endl;
+        if (max_quality == -std::numeric_limits<double>::max()) {
+            break;
+        }
+
+        // std::cout << "worst_idx = " << worst_idx << std::endl;
+        // std::cout << "removing corner at board grid (" << maxE_pos.y << "," << maxE_pos.x << ")" << std::endl;
+        // std::cout << "global corner index = " << board.idx[maxE_pos.y][maxE_pos.x] << std::endl;
 
         proposal.erase(proposal.begin() + worst_idx);
         used[board.idx[maxE_pos.y][maxE_pos.x]] = false;
@@ -2071,6 +2087,7 @@ bool ChessboardDetector::grow_board_dir(
     }
 
     pred = predict_board_corners(corners, used, p1, p2, p3);
+
     if (!params.handle_occlusions) {
         for (int i = 0; i < proposal.size(); ++i) {
             if (pred[i] < 0) {
@@ -2079,6 +2096,18 @@ bool ChessboardDetector::grow_board_dir(
             }
         }
     }
+
+    // bool any_success = false;
+    // for (int i = 0; i < pred.size(); ++i) {
+    //     if (pred[i] >= 0) {
+    //         any_success = true;
+    //         break;
+    //     }
+    // }
+    // if (!any_success) {
+    //     proposal.clear();
+    //     return false;
+    // }
 
     for (int i = 0; i < proposal.size(); ++i) {
         board.idx[proposal[i].y][proposal[i].x] = pred[i];
@@ -2161,6 +2190,18 @@ ChessboardDetector::boards_from_corners(const cv::Mat &img, const ChessboardCorn
             continue;
         }
 
+        // std::vector<cv::Point2d> corners_viz;
+        // for (const auto &idx : board.idx) {
+        //     for (const auto &jdx : idx) {
+        //         if (jdx >= 0) {
+        //             corners_viz.push_back(corners.pixels.at(jdx));
+        //         }
+        //     }
+        // }
+        // cv::Mat debug_img;
+        // img.convertTo(debug_img, CV_8U, 255.0);
+        // plot_corners(debug_img, corners_viz, "init");
+        // cv::cvtColor(img, viz, cv::COLOR_GRAY2BGR);
         bool grew;
         do {
             grew = false;
@@ -2171,6 +2212,7 @@ ChessboardDetector::boards_from_corners(const cv::Mat &img, const ChessboardCorn
                 GrowStatus grow_status = grow_board(corners, used, board, proposal, direction);
 
                 if (grow_status == GrowStatus::FAILED) {
+                    // std::cout << "G" << std::endl;
                     continue;
                 }
                 // std::cout << "grow_status=" << static_cast<int>(grow_status) << " proposal.size=" << proposal.size()
@@ -2178,20 +2220,35 @@ ChessboardDetector::boards_from_corners(const cv::Mat &img, const ChessboardCorn
 
                 filter_board(corners, used, board, proposal, energy);
 
-                bool added = false;
-                for (const auto &p : proposal) {
-                    if (board.idx[p.y][p.x] >= 0) {
-                        added = true;
-                    }
-                }
+                // std::cout << "grow_status after filter=" << static_cast<int>(grow_status)
+                //           << " proposal.size=" << proposal.size() << std::endl;
+
+                // bool added = false;
+                // for (const auto &p : proposal) {
+                //     if (board.idx[p.y][p.x] >= 0) {
+                //         added = true;
+                //     }
+                // }
 
                 if (grow_status == GrowStatus::INTERNAL) {
-                    if (added) {
-                        --direction;
-                    }
+                    // if (added) {
+                    --direction;
+                    // }
                 }
 
                 grew = true;
+
+                // std::vector<cv::Point2d> corners_viz2;
+                // for (const auto &idx : board.idx) {
+                //     for (const auto &jdx : idx) {
+                //         if (jdx >= 0) {
+                //             corners_viz2.push_back(corners.pixels.at(jdx));
+                //         }
+                //     }
+                // }
+                // cv::Mat debug_img;
+                // img.convertTo(debug_img, CV_8U, 255.0);
+                // plot_corners(debug_img, corners_viz2, "iter");
             }
 
             if (board.num_corners() == num_corners_before) {

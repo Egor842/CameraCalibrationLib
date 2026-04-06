@@ -40,7 +40,9 @@ DetectionResult process_image(const std::string &path, const ccl::PatternSize &p
         return res;
     }
 
-    ccl::ChessboardDetector detector;
+    ccl::ChessboardDetectorParams params;
+    params.scales = {0.5, 1.0};
+    ccl::ChessboardDetector detector(params);
     auto boards = detector.detect(img);
 
     if (boards.empty()) {

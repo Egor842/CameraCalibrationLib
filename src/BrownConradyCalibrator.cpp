@@ -165,6 +165,81 @@ solve_focal_lengths(const cv::Mat_<double> &linear_system, const cv::Mat_<double
 }
 
 
+struct NormalizationParams3D {
+    cv::Vec3d shift;
+    double scale;
+};
+
+struct NormalizationParams2D {
+    cv::Vec2d shift;
+    double scale;
+};
+
+
+NormalizationParams3D normalize_3d_points(std::vector<std::vector<cv::Point3d>> &points) {
+    cv::Vec3d sum(0, 0, 0);
+    size_t total = 0;
+    for (auto &view : points) {
+        for (auto &pt : view) {
+            sum += cv::Vec3d(pt.x, pt.y, pt.z);
+            ++total;
+        }
+    }
+    cv::Vec3d centroid = sum / static_cast<double>(total);
+
+    double rms_dist = 0.0;
+    for (auto &view : points) {
+        for (auto &pt : view) {
+            cv::Vec3d d(pt.x - centroid[0], pt.y - centroid[1], pt.z - centroid[2]);
+            rms_dist += d.dot(d);
+        }
+    }
+    rms_dist = std::sqrt(rms_dist / total);
+    double scale = 1.0 / rms_dist;
+
+    for (auto &view : points) {
+        for (auto &pt : view) {
+            pt.x = (pt.x - centroid[0]) * scale;
+            pt.y = (pt.y - centroid[1]) * scale;
+            pt.z = (pt.z - centroid[2]) * scale;
+        }
+    }
+    return {centroid, scale};
+}
+
+
+NormalizationParams2D normalize_image_points(std::vector<std::vector<cv::Point2d>> &points) {
+    cv::Vec2d sum(0, 0);
+    size_t total = 0;
+    for (auto &view : points) {
+        for (auto &pt : view) {
+            sum += cv::Vec2d(pt.x, pt.y);
+            ++total;
+        }
+    }
+    cv::Vec2d centroid = sum / static_cast<double>(total);
+
+    double avg_dist = 0.0;
+    for (auto &view : points) {
+        for (auto &pt : view) {
+            double dx = pt.x - centroid[0];
+            double dy = pt.y - centroid[1];
+            avg_dist += std::sqrt(dx * dx + dy * dy);
+        }
+    }
+    avg_dist /= total;
+    double scale = std::sqrt(2.0) / avg_dist;
+
+    for (auto &view : points) {
+        for (auto &pt : view) {
+            pt.x = (pt.x - centroid[0]) * scale;
+            pt.y = (pt.y - centroid[1]) * scale;
+        }
+    }
+    return {centroid, scale};
+}
+
+
 }; // namespace
 
 
@@ -296,6 +371,12 @@ BrownConradyCalibrationResult BrownConradyCalibrator::calibrate_brown_conrady(
 ) const {
     auto start_time = std::chrono::high_resolution_clock::now();
 
+    // auto obj_pts_norm = object_points;
+    // auto img_pts_norm = image_points;
+
+    // auto norm3D = normalize_3d_points(obj_pts_norm);
+    // auto norm2D = normalize_image_points(img_pts_norm);
+
     auto initial_guess = compute_initial_guess(object_points, image_points);
 
     double intrinsics[9];
@@ -364,13 +445,16 @@ BrownConradyCalibrationResult BrownConradyCalibrator::calibrate_brown_conrady(
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::SPARSE_SCHUR;
     options.use_nonmonotonic_steps = true;
-    options.max_consecutive_nonmonotonic_steps = 5;
-    options.max_num_iterations = 500;
-    options.num_threads = 4;
-    options.function_tolerance = 1e-8;
-    options.gradient_tolerance = 1e-12;
-    options.parameter_tolerance = 1e-10;
-    options.minimizer_progress_to_stdout = false;
+    options.num_threads = 8;
+    options.initial_trust_region_radius = 1e6;
+    options.max_consecutive_nonmonotonic_steps = 20;
+    options.function_tolerance = 1e-12;
+    options.gradient_tolerance = 1e-14;
+    options.parameter_tolerance = 1e-12;
+    options.max_num_iterations = 2000;
+    options.trust_region_strategy_type = ceres::DOGLEG;
+    options.dogleg_type = ceres::TRADITIONAL_DOGLEG;
+    options.minimizer_progress_to_stdout = true;
 
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
