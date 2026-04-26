@@ -1,5 +1,5 @@
 #pragma once
-#include "base_classes.hpp"
+#include "Pattern.hpp"
 #include <cstdint>
 #include <opencv2/opencv.hpp>
 #include <optional>
@@ -24,27 +24,19 @@ struct ChessboardDetectorParams {
 };
 
 
-class Chessboard : public PatternState {
+struct ChessboardCorner {
 public:
-    Chessboard() = delete;
-    Chessboard(
-        const std::vector<std::optional<cv::Point2d>> &pixels, const PatternSize &size, const bool full_detected = false
-    )
-        : PatternState{pixels, size, full_detected} {};
-    Chessboard(std::vector<std::optional<cv::Point2d>> &&pixels, PatternSize &&size, bool &&full_detected = false)
-        : PatternState{std::move(pixels), std::move(size), full_detected} {};
-    ~Chessboard() = default;
+    std::size_t row;
+    std::size_t col;
+    cv::Point2d major_pt;
 
-    const std::vector<std::optional<cv::Point2d>> &get_pixels_vec() const noexcept {
-        return pixels;
-    };
-    const PatternSize get_size() const noexcept {
-        return size;
-    }
-
-    std::pair<std::vector<cv::Point2d>, std::vector<cv::Point3d>>
-    matches_points(const std::vector<cv::Point3d> &points_3d) const noexcept;
+public:
+    cv::Point2d major_point() const noexcept;
+    void visualize(cv::Mat &img, const VisualizationParams &params) const;
 };
+
+
+using Chessboard = Pattern<ChessboardCorner>;
 
 
 class ChessboardDetector {

@@ -1,36 +1,28 @@
 #pragma once
-#include "BaseCalibrator.hpp"
-#include "BrownConradyModel.hpp"
+#include "../models/BrownConradyDistortion.hpp"
+#include "Calibrator.hpp"
 
 
 namespace ccl {
 
 
-struct BrownConradyCalibrationResult : public CalibrationResult {
-    BrownConradyModel get_camera_model(size_t external_vec_idx = 0) const noexcept;
-};
-
-
-class BrownConradyCalibrator : public Calibrator {
+class ZhangCalibrator : public ICalibrator<BrownConradyDistortion> {
 public:
-    BrownConradyCalibrator(const cv::Size &image_size) : image_size(image_size) {}
-    BrownConradyCalibrator(cv::Size &&image_size) : image_size(std::move(image_size)) {}
-    BrownConradyCalibrator(size_t width, size_t height) : image_size(width, height) {}
-
-    BrownConradyCalibrationResult calibrate_brown_conrady(
+    CalibrationResult<BrownConradyDistortion> calibrate(
         const std::vector<std::vector<cv::Point3d>> &object_points,
-        const std::vector<std::vector<cv::Point2d>> &image_points
-    ) const;
-
-protected:
-    virtual std::unique_ptr<CalibrationResult> calibrate_impl(
-        const std::vector<std::vector<cv::Point3d>> &object_points,
-        const std::vector<std::vector<cv::Point2d>> &image_points
+        const std::vector<std::vector<cv::Point2d>> &image_points,
+        const cv::Size &image_size
     ) const override;
 
-private:
-    cv::Size image_size;
+    void set_estimation_k3() noexcept;
+    void set_estimation_skew() noexcept;
+    void set_loss_function(LossFunctionType loss) noexcept;
 
+    ZhangCalibrator &with_k3(bool value = true) noexcept;
+    ZhangCalibrator &with_skew(bool value = true) noexcept;
+    ZhangCalibrator &with_loss(LossFunctionType loss) noexcept;
+
+private:
     struct InitialGuess {
         cv::Mat camera_matrix;                    // 3x3 intrinsic matrix
         cv::Mat distortion_coeffs;                // 1x5 (k1, k2, p1, p2, k3)
@@ -51,12 +43,16 @@ private:
         double fx, fy, cx, cy;
     };
 
+    bool estimate_k3 = false;
+    bool estimate_skew = false;
+
+private:
     PreparedData prepare_data(
         const std::vector<std::vector<cv::Point3d>> &object_points,
         const std::vector<std::vector<cv::Point2d>> &image_points
     ) const;
 
-    IntrinsicInitialGuess estimate_intrinsic_matrix(const PreparedData &data) const;
+    IntrinsicInitialGuess estimate_intrinsic_matrix(const PreparedData &data, const cv::Size &image_size) const;
 
     std::vector<cv::Mat> estimate_extrinsic_parameters(
         const PreparedData &data, const cv::Mat &camera_matrix, const cv::Mat &distortion_coeffs
@@ -68,7 +64,8 @@ private:
 
     InitialGuess compute_initial_guess(
         const std::vector<std::vector<cv::Point3d>> &object_points,
-        const std::vector<std::vector<cv::Point2d>> &image_points
+        const std::vector<std::vector<cv::Point2d>> &image_points,
+        const cv::Size &image_size
     ) const;
 };
 

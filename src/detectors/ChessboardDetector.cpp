@@ -1,4 +1,4 @@
-#include "../include/ChessboardDetector.hpp"
+#include "../../include/ccl/detectors/ChessboardDetector.hpp"
 #include <cstdint>
 #include <opencv2/core/hal/hal.hpp>
 #include <opencv2/highgui.hpp>
@@ -14,18 +14,25 @@ constexpr double EPSILON = 1e-6;
 constexpr double DOUBLE_MAX = std::numeric_limits<double>::max();
 
 
-std::pair<std::vector<cv::Point2d>, std::vector<cv::Point3d>>
-Chessboard::matches_points(const std::vector<cv::Point3d> &points_3d) const noexcept {
-    std::pair<std::vector<cv::Point2d>, std::vector<cv::Point3d>> matches;
+cv::Point2d ChessboardCorner::major_point() const noexcept {
+    return major_pt;
+}
 
-    for (size_t idx = 0; idx < pixels.size(); idx++) {
-        if (pixels[idx].has_value()) {
-            matches.first.push_back(pixels[idx].value());
-            matches.second.push_back(points_3d[idx]);
-        }
+
+void ChessboardCorner::visualize(cv::Mat &img, const VisualizationParams &params) const {
+    draw_marker(img, major_pt, params.marker_type, params.marker_size, params.marker_color, params.marker_thickness);
+
+    if (params.draw_labels) {
+        std::string label = std::to_string(row) + "," + std::to_string(col);
+
+        cv::Point text_pos(
+            static_cast<int>(major_pt.x + params.marker_size + 2), static_cast<int>(major_pt.y - params.marker_size - 2)
+        );
+
+        cv::putText(
+            img, label, text_pos, cv::FONT_HERSHEY_SIMPLEX, params.font_scale, params.text_color, params.text_thickness
+        );
     }
-
-    return matches;
 }
 
 
@@ -186,16 +193,21 @@ std::vector<Chessboard> ChessboardDetector::detect(const cv::Mat &img) const {
         int real_height = board.idx.size() - 2 * offset;
         int real_width = board.idx[0].size() - 2 * offset;
 
-        std::vector<std::optional<cv::Point2d>> pixels;
+        std::vector<std::optional<ChessboardCorner>> corners_vec(real_height * real_width);
         bool full_detected = true;
+        ChessboardCorner corner;
 
         for (int y = offset; y <= real_height; ++y) {
+            corner.col = static_cast<size_t>(y - offset);
+
             for (int x = offset; x <= real_width; ++x) {
                 int idx = board.idx[y][x];
                 if (idx >= 0) {
-                    pixels.push_back(corners.pixels[idx]);
+                    corner.row = static_cast<size_t>(x - offset);
+                    corner.major_pt = corners.pixels[idx];
+                    corners_vec.push_back(corner);
                 } else {
-                    pixels.push_back(std::nullopt);
+                    corners_vec.emplace_back(std::nullopt);
                     full_detected = false;
                 }
             }
@@ -204,22 +216,26 @@ std::vector<Chessboard> ChessboardDetector::detect(const cv::Mat &img) const {
         if (real_width < real_height) {
             int m = real_height;
             int n = real_width;
-
-            std::vector<std::optional<cv::Point2d>> new_pixels(n * m);
+            std::vector<std::optional<ChessboardCorner>> new_corners(n * m);
 
             for (int old_row = 0; old_row < m; ++old_row) {
                 for (int old_col = 0; old_col < n; ++old_col) {
                     int old_idx = old_row * n + old_col;
+                    const auto &opt = corners_vec[old_idx];
 
-                    int new_row = n - 1 - old_col;
-                    int new_col = old_row;
-                    int new_idx = new_row * m + new_col;
+                    corner.row = n - 1 - old_col;
+                    corner.col = old_row;
+                    int new_idx = corner.row * m + corner.col;
 
-                    new_pixels[new_idx] = pixels[old_idx];
+                    if (opt.has_value()) {
+                        new_corners[new_idx] = corner;
+                    } else {
+                        new_corners[new_idx] = std::nullopt;
+                    }
                 }
             }
 
-            pixels = std::move(new_pixels);
+            corners_vec = std::move(new_corners);
             std::swap(real_width, real_height);
         }
 
@@ -231,7 +247,11 @@ std::vector<Chessboard> ChessboardDetector::detect(const cv::Mat &img) const {
         //     }
         // }
         // plot_corners(display, gg, "ggg");
-        chessboards.emplace_back(std::move(pixels), cv::Size(real_width, real_height), full_detected);
+        chessboards.emplace_back(
+            std::move(corners_vec),
+            PatternSize(static_cast<size_t>(real_width), static_cast<size_t>(real_height)),
+            full_detected
+        );
     }
     cv::destroyAllWindows();
 
@@ -2215,7 +2235,8 @@ ChessboardDetector::boards_from_corners(const cv::Mat &img, const ChessboardCorn
                     // std::cout << "G" << std::endl;
                     continue;
                 }
-                // std::cout << "grow_status=" << static_cast<int>(grow_status) << " proposal.size=" << proposal.size()
+                // std::cout << "grow_status=" << static_cast<int>(grow_status) << " proposal.size=" <<
+                // proposal.size()
                 //           << std::endl;
 
                 filter_board(corners, used, board, proposal, energy);

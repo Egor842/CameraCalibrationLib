@@ -1,8 +1,7 @@
-#include "../include/BrownConradyCalibrator.hpp"
+#include "../../include/ccl/calibrators/ZhangCalibrator.hpp"
 #include <ceres/ceres.h>
 #include <ceres/loss_function.h>
 #include <ceres/rotation.h>
-#include <chrono>
 
 
 namespace ccl {
@@ -13,17 +12,25 @@ namespace {
 
 struct ReprojectionErrorCeres {
     ReprojectionErrorCeres(
-        double observed_x, double observed_y, double point_3d_x, double point_3d_y, double point_3d_z
+        double observed_x,
+        double observed_y,
+        double point_3d_x,
+        double point_3d_y,
+        double point_3d_z,
+        bool estimate_k3 = false,
+        bool estimate_skew = false
     )
         : observed_x_(observed_x),
           observed_y_(observed_y),
           point_3d_x_(point_3d_x),
           point_3d_y_(point_3d_y),
-          point_3d_z_(point_3d_z) {}
+          point_3d_z_(point_3d_z),
+          estimate_k3(estimate_k3),
+          estimate_skew(estimate_skew) {}
 
     template <typename T>
     bool operator()(
-        const T *const intrinsics, // [fx, fy, cx, cy, k1, k2, p1, p2, k3]
+        const T *const intrinsics, // [fx, fy, cx, cy, skew, k1, k2, p1, p2, k3]
         const T *const rvec,       // rvec (3)
         const T *const tvec,       // tvec (3)
         T *residuals               // [res_x, res_y]
@@ -32,11 +39,12 @@ struct ReprojectionErrorCeres {
         const T &fy = intrinsics[1];
         const T &cx = intrinsics[2];
         const T &cy = intrinsics[3];
-        const T &k1 = intrinsics[4];
-        const T &k2 = intrinsics[5];
-        const T &p1 = intrinsics[6];
-        const T &p2 = intrinsics[7];
-        const T &k3 = intrinsics[8];
+        const T &skew = intrinsics[4];
+        const T &k1 = intrinsics[5];
+        const T &k2 = intrinsics[6];
+        const T &p1 = intrinsics[7];
+        const T &p2 = intrinsics[8];
+        const T &k3 = intrinsics[9];
 
         T R[9];
         ceres::AngleAxisToRotationMatrix(rvec, R);
@@ -63,13 +71,19 @@ struct ReprojectionErrorCeres {
         T r2 = xp * xp + yp * yp;
         T r4 = r2 * r2;
         T r6 = r4 * r2;
-        T radial = T(1) + k1 * r2 + k2 * r4 + k3 * r6;
+        T radial = T(1) + k1 * r2 + k2 * r4;
+        if (estimate_k3) {
+            radial += k3 * r6;
+        }
 
         T xpp = xp * radial + T(2) * p1 * xp * yp + p2 * (r2 + T(2) * xp * xp);
         T ypp = yp * radial + p1 * (r2 + T(2) * yp * yp) + T(2) * p2 * xp * yp;
 
         T predicted_x = fx * xpp + cx;
         T predicted_y = fy * ypp + cy;
+        if (estimate_skew) {
+            predicted_x += skew * ypp;
+        }
 
         residuals[0] = predicted_x - T(observed_x_);
         residuals[1] = predicted_y - T(observed_y_);
@@ -79,6 +93,7 @@ struct ReprojectionErrorCeres {
 private:
     const double observed_x_, observed_y_;
     const double point_3d_x_, point_3d_y_, point_3d_z_;
+    const bool estimate_k3, estimate_skew;
 };
 
 
@@ -243,7 +258,7 @@ NormalizationParams2D normalize_image_points(std::vector<std::vector<cv::Point2d
 }; // namespace
 
 
-BrownConradyCalibrator::PreparedData BrownConradyCalibrator::prepare_data(
+ZhangCalibrator::PreparedData ZhangCalibrator::prepare_data(
     const std::vector<std::vector<cv::Point3d>> &object_points,
     const std::vector<std::vector<cv::Point2d>> &image_points
 ) const {
@@ -275,8 +290,8 @@ BrownConradyCalibrator::PreparedData BrownConradyCalibrator::prepare_data(
 }
 
 
-BrownConradyCalibrator::IntrinsicInitialGuess
-BrownConradyCalibrator::estimate_intrinsic_matrix(const PreparedData &data) const {
+ZhangCalibrator::IntrinsicInitialGuess
+ZhangCalibrator::estimate_intrinsic_matrix(const PreparedData &data, const cv::Size &image_size) const {
     const double cx = (image_size.width - 1) * 0.5;
     const double cy = (image_size.height - 1) * 0.5;
 
@@ -308,7 +323,7 @@ BrownConradyCalibrator::estimate_intrinsic_matrix(const PreparedData &data) cons
 }
 
 
-std::pair<std::vector<cv::Mat>, std::vector<cv::Mat>> BrownConradyCalibrator::estimate_rotation_and_translation(
+std::pair<std::vector<cv::Mat>, std::vector<cv::Mat>> ZhangCalibrator::estimate_rotation_and_translation(
     const PreparedData &data, const cv::Mat &camera_matrix, const cv::Mat &distortion_coeffs
 ) const {
     const int num_views = data.num_views;
@@ -343,13 +358,14 @@ std::pair<std::vector<cv::Mat>, std::vector<cv::Mat>> BrownConradyCalibrator::es
 }
 
 
-BrownConradyCalibrator::InitialGuess BrownConradyCalibrator::compute_initial_guess(
+ZhangCalibrator::InitialGuess ZhangCalibrator::compute_initial_guess(
     const std::vector<std::vector<cv::Point3d>> &object_points,
-    const std::vector<std::vector<cv::Point2d>> &image_points
+    const std::vector<std::vector<cv::Point2d>> &image_points,
+    const cv::Size &image_size
 ) const {
     auto prepared_data = prepare_data(object_points, image_points);
 
-    auto intrinsic_guess = estimate_intrinsic_matrix(prepared_data);
+    auto intrinsic_guess = estimate_intrinsic_matrix(prepared_data, image_size);
 
     cv::Mat distortion_coeffs = cv::Mat::zeros(1, 5, CV_64F);
 
@@ -365,9 +381,10 @@ BrownConradyCalibrator::InitialGuess BrownConradyCalibrator::compute_initial_gue
 }
 
 
-BrownConradyCalibrationResult BrownConradyCalibrator::calibrate_brown_conrady(
+CalibrationResult<BrownConradyDistortion> ZhangCalibrator::calibrate(
     const std::vector<std::vector<cv::Point3d>> &object_points,
-    const std::vector<std::vector<cv::Point2d>> &image_points
+    const std::vector<std::vector<cv::Point2d>> &image_points,
+    const cv::Size &image_size
 ) const {
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -377,18 +394,19 @@ BrownConradyCalibrationResult BrownConradyCalibrator::calibrate_brown_conrady(
     // auto norm3D = normalize_3d_points(obj_pts_norm);
     // auto norm2D = normalize_image_points(img_pts_norm);
 
-    auto initial_guess = compute_initial_guess(object_points, image_points);
+    auto initial_guess = compute_initial_guess(object_points, image_points, image_size);
 
-    double intrinsics[9];
+    double intrinsics[10];
     intrinsics[0] = initial_guess.camera_matrix.at<double>(0, 0);  // fx
     intrinsics[1] = initial_guess.camera_matrix.at<double>(1, 1);  // fy
     intrinsics[2] = initial_guess.camera_matrix.at<double>(0, 2);  // cx
     intrinsics[3] = initial_guess.camera_matrix.at<double>(1, 2);  // cy
-    intrinsics[4] = initial_guess.distortion_coeffs.at<double>(0); // k1
-    intrinsics[5] = initial_guess.distortion_coeffs.at<double>(1); // k2
-    intrinsics[6] = initial_guess.distortion_coeffs.at<double>(2); // p1
-    intrinsics[7] = initial_guess.distortion_coeffs.at<double>(3); // p2
-    intrinsics[8] = initial_guess.distortion_coeffs.at<double>(4); // k3
+    intrinsics[4] = initial_guess.camera_matrix.at<double>(0, 1);  // skew
+    intrinsics[5] = initial_guess.distortion_coeffs.at<double>(0); // k1
+    intrinsics[6] = initial_guess.distortion_coeffs.at<double>(1); // k2
+    intrinsics[7] = initial_guess.distortion_coeffs.at<double>(2); // p1
+    intrinsics[8] = initial_guess.distortion_coeffs.at<double>(3); // p2
+    intrinsics[9] = initial_guess.distortion_coeffs.at<double>(4); // k3
 
     const int num_views = static_cast<int>(initial_guess.rotation_vectors.size());
 
@@ -407,25 +425,45 @@ BrownConradyCalibrationResult BrownConradyCalibrator::calibrate_brown_conrady(
     for (int view = 0; view < num_views; ++view) {
         const int num_points = static_cast<int>(object_points[view].size());
         for (int point = 0; point < num_points; ++point) {
-            auto *cost = new ceres::AutoDiffCostFunction<ReprojectionErrorCeres, 2, 9, 3, 3>(new ReprojectionErrorCeres(
-                image_points[view][point].x,
-                image_points[view][point].y,
-                object_points[view][point].x,
-                object_points[view][point].y,
-                object_points[view][point].z
-            ));
+            auto *cost =
+                new ceres::AutoDiffCostFunction<ReprojectionErrorCeres, 2, 10, 3, 3>(new ReprojectionErrorCeres(
+                    image_points[view][point].x,
+                    image_points[view][point].y,
+                    object_points[view][point].x,
+                    object_points[view][point].y,
+                    object_points[view][point].z,
+                    estimate_k3,
+                    estimate_skew
+                ));
 
-            auto *loss = new ceres::CauchyLoss(1.0); // δ = 1 пиксель
+            auto get_loss_function = [](const LossFunctionType &loss_type) -> ceres::LossFunction * {
+                switch (loss_type) {
+                case LossFunctionType::CAUCHY:
+                    return new ceres::CauchyLoss(1.0);
+                case LossFunctionType::L2:
+                    return nullptr;
+                case LossFunctionType::HUBER:
+                    return new ceres::HuberLoss(1.0);
+                case LossFunctionType::TUKEY:
+                    return new ceres::TukeyLoss(1.0);
+                }
+            };
+
+            auto *loss = get_loss_function(loss_function_type);
 
             problem.AddResidualBlock(cost, loss, intrinsics, rvecs_data[view].data(), tvecs_data[view].data());
         }
     }
 
-    // problem.SetParameterLowerBound(intrinsics, 0, 100.0);
-    // problem.SetParameterUpperBound(intrinsics, 0, 5000.0);
-    // problem.SetParameterLowerBound(intrinsics, 1, 100.0);
-    // problem.SetParameterUpperBound(intrinsics, 1, 5000.0);
+    // if (!estimate_k3) {
+    //     problem.SetParameterBlockConstant(&intrinsics[9]);
+    // }
+    // if (!estimate_skew) {
+    //     problem.SetParameterBlockConstant(&intrinsics[4]);
+    // }
 
+    problem.SetParameterLowerBound(intrinsics, 0, 0.0);
+    problem.SetParameterLowerBound(intrinsics, 1, 0.0);
     problem.SetParameterLowerBound(intrinsics, 2, 0.0);
     problem.SetParameterUpperBound(intrinsics, 2, image_size.width);
     problem.SetParameterLowerBound(intrinsics, 3, 0.0);
@@ -443,14 +481,14 @@ BrownConradyCalibrationResult BrownConradyCalibrator::calibrate_brown_conrady(
     // problem.SetParameterUpperBound(intrinsics, 8, 1.0);
 
     ceres::Solver::Options options;
-    options.linear_solver_type = ceres::SPARSE_SCHUR;
+    options.linear_solver_type = ceres::DENSE_SCHUR;
     options.use_nonmonotonic_steps = true;
     options.num_threads = 8;
-    options.initial_trust_region_radius = 1e6;
+    options.initial_trust_region_radius = 1e4;
     options.max_consecutive_nonmonotonic_steps = 20;
-    options.function_tolerance = 1e-12;
-    options.gradient_tolerance = 1e-14;
-    options.parameter_tolerance = 1e-12;
+    options.function_tolerance = 1e-16;
+    options.gradient_tolerance = 1e-16;
+    options.parameter_tolerance = 1e-16;
     options.max_num_iterations = 2000;
     options.trust_region_strategy_type = ceres::DOGLEG;
     options.dogleg_type = ceres::TRADITIONAL_DOGLEG;
@@ -459,61 +497,65 @@ BrownConradyCalibrationResult BrownConradyCalibrator::calibrate_brown_conrady(
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
 
+    if (!summary.IsSolutionUsable()) {
+        CalibrationResult<BrownConradyDistortion> failed_result;
+        failed_result.successfully = false;
+        auto end_time = std::chrono::high_resolution_clock::now();
+        failed_result.time_seconds = std::chrono::duration<double>(end_time - start_time).count();
+        return failed_result;
+    }
+
     cv::Mat optimized_camera_matrix = cv::Mat::eye(3, 3, CV_64F);
     optimized_camera_matrix.at<double>(0, 0) = intrinsics[0];
     optimized_camera_matrix.at<double>(1, 1) = intrinsics[1];
     optimized_camera_matrix.at<double>(0, 2) = intrinsics[2];
     optimized_camera_matrix.at<double>(1, 2) = intrinsics[3];
+    optimized_camera_matrix.at<double>(0, 1) = intrinsics[4];
 
     cv::Mat optimized_distortion = cv::Mat::zeros(1, 5, CV_64F);
-    optimized_distortion.at<double>(0) = intrinsics[4];
-    optimized_distortion.at<double>(1) = intrinsics[5];
-    optimized_distortion.at<double>(2) = intrinsics[6];
-    optimized_distortion.at<double>(3) = intrinsics[7];
-    optimized_distortion.at<double>(4) = intrinsics[8];
+    optimized_distortion.at<double>(0) = intrinsics[5];
+    optimized_distortion.at<double>(1) = intrinsics[6];
+    optimized_distortion.at<double>(2) = intrinsics[7];
+    optimized_distortion.at<double>(3) = intrinsics[8];
+    optimized_distortion.at<double>(4) = intrinsics[9];
 
     std::vector<cv::Mat> optimized_rvecs(num_views);
     std::vector<cv::Mat> optimized_tvecs(num_views);
-
     for (int i = 0; i < num_views; ++i) {
-        optimized_rvecs[i].create(3, 1, CV_64F);
-        optimized_tvecs[i].create(3, 1, CV_64F);
-        optimized_rvecs[i].at<double>(0) = rvecs_data[i][0];
-        optimized_rvecs[i].at<double>(1) = rvecs_data[i][1];
-        optimized_rvecs[i].at<double>(2) = rvecs_data[i][2];
-        optimized_tvecs[i].at<double>(0) = tvecs_data[i][0];
-        optimized_tvecs[i].at<double>(1) = tvecs_data[i][1];
-        optimized_tvecs[i].at<double>(2) = tvecs_data[i][2];
+        optimized_rvecs[i] = cv::Mat(3, 1, CV_64F, rvecs_data[i].data()).clone();
+        optimized_tvecs[i] = cv::Mat(3, 1, CV_64F, tvecs_data[i].data()).clone();
     }
 
+    std::vector<double> per_view_errors(num_views, 0.0);
     double total_squared_error = 0.0;
     int total_points = 0;
-
     for (int view = 0; view < num_views; ++view) {
         const int num_points = static_cast<int>(object_points[view].size());
-        total_points += num_points;
-
+        double view_sq_err = 0.0;
         for (int point = 0; point < num_points; ++point) {
             ReprojectionErrorCeres error(
                 image_points[view][point].x,
                 image_points[view][point].y,
                 object_points[view][point].x,
                 object_points[view][point].y,
-                object_points[view][point].z
+                object_points[view][point].z,
+                estimate_k3,
+                estimate_skew
             );
-
-            double residuals[2];
-            error(intrinsics, rvecs_data[view].data(), tvecs_data[view].data(), residuals);
-            total_squared_error += residuals[0] * residuals[0] + residuals[1] * residuals[1];
+            double res[2];
+            error(intrinsics, rvecs_data[view].data(), tvecs_data[view].data(), res);
+            view_sq_err += res[0] * res[0] + res[1] * res[1];
         }
+        total_squared_error += view_sq_err;
+        total_points += num_points;
+        per_view_errors[view] = std::sqrt(view_sq_err / num_points);
     }
-
     double final_rmse = std::sqrt(total_squared_error / total_points);
 
-    BrownConradyCalibrationResult result;
+    CalibrationResult<BrownConradyDistortion> result;
     result.successfully = true;
     result.rmse = final_rmse;
-
+    result.per_view_errors = std::move(per_view_errors);
     result.intrinsic = IntrinsicParams(
         optimized_camera_matrix.at<double>(0, 0),
         optimized_camera_matrix.at<double>(1, 1),
@@ -521,16 +563,13 @@ BrownConradyCalibrationResult BrownConradyCalibrator::calibrate_brown_conrady(
         optimized_camera_matrix.at<double>(1, 2),
         optimized_camera_matrix.at<double>(0, 1)
     );
-
-    result.distortion = std::make_unique<BrownConradyDistortion>(
+    result.distortion = BrownConradyDistortion(
         optimized_distortion.at<double>(0),
         optimized_distortion.at<double>(1),
         optimized_distortion.at<double>(2),
         optimized_distortion.at<double>(3),
         optimized_distortion.at<double>(4)
     );
-
-    result.extrinsics_vec.clear();
     result.extrinsics_vec.reserve(num_views);
     for (int i = 0; i < num_views; ++i) {
         cv::Vec3d rvec(
@@ -549,26 +588,36 @@ BrownConradyCalibrationResult BrownConradyCalibrator::calibrate_brown_conrady(
 }
 
 
-std::unique_ptr<CalibrationResult> BrownConradyCalibrator::calibrate_impl(
-    const std::vector<std::vector<cv::Point3d>> &object_points,
-    const std::vector<std::vector<cv::Point2d>> &image_points
-) const {
-    auto result = calibrate_brown_conrady(object_points, image_points);
-    return std::make_unique<BrownConradyCalibrationResult>(std::move(result));
+void ZhangCalibrator::set_estimation_k3() noexcept {
+    estimate_k3 = true;
+};
+
+
+void ZhangCalibrator::set_estimation_skew() noexcept {
+    estimate_skew = true;
 }
 
 
-BrownConradyModel BrownConradyCalibrationResult::get_camera_model(size_t external_vec_idx) const noexcept {
-    if (!successfully || extrinsics_vec.empty() || external_vec_idx >= extrinsics_vec.size()) {
-        return BrownConradyModel(IntrinsicParams(), ExtrinsicParams(), BrownConradyDistortion());
-    }
+ZhangCalibrator &ZhangCalibrator::with_k3(bool value) noexcept {
+    estimate_k3 = value;
+    return *this;
+}
 
-    auto *brown_distortion = dynamic_cast<BrownConradyDistortion *>(distortion.get());
-    if (!brown_distortion) {
-        return BrownConradyModel(intrinsic, extrinsics_vec[external_vec_idx], BrownConradyDistortion());
-    }
 
-    return BrownConradyModel(intrinsic, extrinsics_vec[external_vec_idx], *brown_distortion);
+ZhangCalibrator &ZhangCalibrator::with_skew(bool value) noexcept {
+    estimate_skew = value;
+    return *this;
+}
+
+
+ZhangCalibrator &ZhangCalibrator::with_loss(LossFunctionType loss) noexcept {
+    loss_function_type = loss;
+    return *this;
+}
+
+
+void ZhangCalibrator::set_loss_function(LossFunctionType loss) noexcept {
+    loss_function_type = loss;
 }
 
 
