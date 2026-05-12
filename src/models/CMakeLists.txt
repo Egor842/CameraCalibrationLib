@@ -24,12 +24,10 @@ target_include_directories(ccl_models
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-if(yaml-cpp_FOUND)
-    target_link_libraries(ccl_models PUBLIC yaml-cpp)
-endif()
-
 if(OpenCV_FOUND)
-    target_include_directories(ccl_models SYSTEM PUBLIC ${OpenCV_INCLUDE_DIRS})
-    target_link_libraries(ccl_models PUBLIC ${OpenCV_LIBS})
+    target_include_directories(ccl_calibrators SYSTEM PUBLIC ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(ccl_calibrators PUBLIC OpenCV::OpenCV)
 endif()
-
+if(yaml-cpp_FOUND)
+    target_link_libraries(ccl_calibrators PUBLIC yaml-cpp::yaml-cpp)
+endif()

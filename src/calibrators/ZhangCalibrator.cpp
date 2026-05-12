@@ -526,12 +526,34 @@ CalibrationResult<BrownConradyDistortion> ZhangCalibrator::calibrate(
         optimized_tvecs[i] = cv::Mat(3, 1, CV_64F, tvecs_data[i].data()).clone();
     }
 
+    ceres::LossFunction* eval_loss = nullptr;
+    bool use_loss = false;
+    switch (loss_function_type) {
+        case LossFunctionType::CAUCHY:
+            eval_loss = new ceres::CauchyLoss(1.0);
+            use_loss = true;
+            break;
+        case LossFunctionType::HUBER:
+            eval_loss = new ceres::HuberLoss(1.0);
+            use_loss = true;
+            break;
+        case LossFunctionType::TUKEY:
+            eval_loss = new ceres::TukeyLoss(1.0);
+            use_loss = true;
+            break;
+        case LossFunctionType::L2:
+        default:
+            use_loss = false;
+            break;
+    }
+
     std::vector<double> per_view_errors(num_views, 0.0);
-    double total_squared_error = 0.0;
+    double total_cost = 0.0;
     int total_points = 0;
+
     for (int view = 0; view < num_views; ++view) {
         const int num_points = static_cast<int>(object_points[view].size());
-        double view_sq_err = 0.0;
+        double view_cost = 0.0;
         for (int point = 0; point < num_points; ++point) {
             ReprojectionErrorCeres error(
                 image_points[view][point].x,
@@ -544,13 +566,25 @@ CalibrationResult<BrownConradyDistortion> ZhangCalibrator::calibrate(
             );
             double res[2];
             error(intrinsics, rvecs_data[view].data(), tvecs_data[view].data(), res);
-            view_sq_err += res[0] * res[0] + res[1] * res[1];
+            double squared_norm = res[0] * res[0] + res[1] * res[1];
+
+            double cost;
+            if (use_loss && eval_loss) {
+                double rho[3];
+                eval_loss->Evaluate(squared_norm, rho);
+                cost = rho[0];
+            } else {
+                cost = squared_norm; 
+            }
+            view_cost += cost;
         }
-        total_squared_error += view_sq_err;
+        total_cost += view_cost;
         total_points += num_points;
-        per_view_errors[view] = std::sqrt(view_sq_err / num_points);
+        per_view_errors[view] = std::sqrt(view_cost / num_points);
     }
-    double final_rmse = std::sqrt(total_squared_error / total_points);
+
+    double final_rmse = std::sqrt(total_cost / total_points);
+    delete eval_loss;
 
     CalibrationResult<BrownConradyDistortion> result;
     result.successfully = true;

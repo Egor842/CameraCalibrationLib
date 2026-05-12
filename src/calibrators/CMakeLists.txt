@@ -18,5 +18,11 @@ target_include_directories(ccl_calibrators
 
 if(OpenCV_FOUND)
     target_include_directories(ccl_calibrators SYSTEM PUBLIC ${OpenCV_INCLUDE_DIRS})
-    target_link_libraries(ccl_calibrators PUBLIC ${OpenCV_LIBS})
+    target_link_libraries(ccl_calibrators PUBLIC OpenCV::OpenCV)
+endif()
+if(Ceres_FOUND)
+    target_link_libraries(ccl_calibrators PUBLIC ceres::ceres)
+endif()
+if(yaml-cpp_FOUND)
+    target_link_libraries(ccl_calibrators PUBLIC yaml-cpp::yaml-cpp)
 endif()

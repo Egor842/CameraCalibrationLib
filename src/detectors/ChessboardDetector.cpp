@@ -193,17 +193,18 @@ std::vector<Chessboard> ChessboardDetector::detect(const cv::Mat &img) const {
         int real_height = board.idx.size() - 2 * offset;
         int real_width = board.idx[0].size() - 2 * offset;
 
-        std::vector<std::optional<ChessboardCorner>> corners_vec(real_height * real_width);
+        std::vector<std::optional<ChessboardCorner>> corners_vec;
+        corners_vec.reserve(real_height * real_width);
         bool full_detected = true;
         ChessboardCorner corner;
 
         for (int y = offset; y <= real_height; ++y) {
-            corner.col = static_cast<size_t>(y - offset);
+            corner.row = static_cast<size_t>(y - offset);
 
             for (int x = offset; x <= real_width; ++x) {
                 int idx = board.idx[y][x];
                 if (idx >= 0) {
-                    corner.row = static_cast<size_t>(x - offset);
+                    corner.col = static_cast<size_t>(x - offset);
                     corner.major_pt = corners.pixels[idx];
                     corners_vec.push_back(corner);
                 } else {
@@ -228,6 +229,7 @@ std::vector<Chessboard> ChessboardDetector::detect(const cv::Mat &img) const {
                     int new_idx = corner.row * m + corner.col;
 
                     if (opt.has_value()) {
+                        corner.major_pt = opt->major_pt;
                         new_corners[new_idx] = corner;
                     } else {
                         new_corners[new_idx] = std::nullopt;

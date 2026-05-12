@@ -1,0 +1,17 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+if(@OpenCV_FOUND@)
+    find_dependency(OpenCV)
+endif()
+
+if(@yaml-cpp_FOUND@)
+    find_dependency(yaml-cpp)
+endif()
+
+if(@Ceres_FOUND@)
+    find_dependency(Ceres)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/cclTargets.cmake")

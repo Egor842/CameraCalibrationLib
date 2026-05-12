@@ -17,7 +17,6 @@ target_include_directories(ccl_utility
 )
 
 if(OpenCV_FOUND)
-    target_include_directories(ccl_utility SYSTEM PUBLIC ${OpenCV_INCLUDE_DIRS})
-    target_link_libraries(ccl_utility PUBLIC ${OpenCV_LIBS})
+    target_include_directories(ccl_calibrators SYSTEM PUBLIC ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(ccl_calibrators PUBLIC OpenCV::OpenCV)
 endif()
-

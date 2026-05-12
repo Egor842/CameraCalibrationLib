@@ -53,49 +53,26 @@ add_subdirectory(src/detectors)
 add_subdirectory(src/calibrators)
 add_subdirectory(src/utility)
 
-if(BUILD_SHARED_LIBS)
-    add_library(${PROJECT_NAME} SHARED)
-else()
-    add_library(${PROJECT_NAME} STATIC)
-endif()
-
-target_sources(${PROJECT_NAME} PRIVATE
-    $<TARGET_OBJECTS:ccl_models>
-    $<TARGET_OBJECTS:ccl_detectors>
-    $<TARGET_OBJECTS:ccl_calibrators>
-    $<TARGET_OBJECTS:ccl_utility>
+add_library(${PROJECT_NAME} INTERFACE)
+target_link_libraries(${PROJECT_NAME} INTERFACE
+    ccl_models
+    ccl_detectors
+    ccl_calibrators
+    ccl_utility
 )
-
-if(OpenCV_FOUND)
-    target_link_libraries(${PROJECT_NAME} PUBLIC ${OpenCV_LIBS})
-endif()
-if(yaml-cpp_FOUND)
-    target_link_libraries(${PROJECT_NAME} PUBLIC yaml-cpp)
-endif()
-if(Ceres_FOUND)
-    target_link_libraries(${PROJECT_NAME} PUBLIC ${CERES_LIBRARIES})
-endif()
-
-target_include_directories(${PROJECT_NAME} PUBLIC
+target_include_directories(${PROJECT_NAME} INTERFACE
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
 
-if(BUILD_SHARED_LIBS)
-    include(GenerateExportHeader)
-    generate_export_header(${PROJECT_NAME}
-        BASE_NAME ccl
-        EXPORT_MACRO_NAME CCL_API
-        EXPORT_FILE_NAME ${CMAKE_CURRENT_BINARY_DIR}/ccl_export.h
-    )
-    target_include_directories(${PROJECT_NAME} PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
-    )
-endif()
-
 include(GNUInstallDirs)
 
-install(TARGETS ${PROJECT_NAME}
+install(TARGETS
+    ccl_models
+    ccl_detectors
+    ccl_calibrators
+    ccl_utility
+    ${PROJECT_NAME}
     EXPORT cclTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -114,5 +91,17 @@ install(DIRECTORY
 install(EXPORT cclTargets
     FILE cclTargets.cmake
     NAMESPACE ccl::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ccl
+)
+
+include(CMakePackageConfigHelpers)
+
+configure_package_config_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cclConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/cclConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ccl
+)
+
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cclConfig.cmake
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ccl
 )
