@@ -9,7 +9,6 @@
 
 #include <opencv2/opencv.hpp>
 
-// Подключаем предоставленные заголовки (пути могут отличаться)
 #include "ccl/calibrators/ZhangCalibrator.hpp"
 #include "ccl/detectors/ChessboardDetector.hpp"
 #include "ccl/detectors/Pattern.hpp"
@@ -18,25 +17,22 @@
 #include "ccl/detectors/PatternSize.hpp"
 #include "ccl/utility/DetectionIO.hpp"
 
-// Конфигурация, собираемая от пользователя или из командной строки
 struct CalibrationConfig {
     std::string images_dir;
-    int pattern_width = 9;      // фактическая ширина после возможной перестановки (всегда >= высоты)
+    int pattern_width = 9;
     int pattern_height = 6;
-    double square_size = 0.025; // метры
+    double square_size = 0.025;
     std::string output_xml = "calibration_result.xml";
     bool estimate_k3 = false;
     bool estimate_skew = false;
     ccl::LossFunctionType loss_function = ccl::LossFunctionType::CAUCHY;
-    std::string detector_config_path;   // пустая строка = параметры по умолчанию
+    std::string detector_config_path;
     bool save_detections = true;
 
-    // Получить объект размера доски
     ccl::PatternSize patternSize() const {
         return ccl::PatternSize(pattern_width, pattern_height);
     }
 
-    // Генерация командной строки для точного повторения запуска
     std::string toCommandLine(const std::string& exe_name) const {
         std::ostringstream cmd;
         cmd << exe_name;
@@ -62,7 +58,6 @@ struct CalibrationConfig {
     }
 };
 
-// Генерация трёхмерных точек шахматной доски
 std::vector<cv::Point3d> generateObjectPoints(const ccl::PatternSize& size, double squareSize) {
     std::vector<cv::Point3d> pts;
     int w = static_cast<int>(size.get_width());
@@ -76,14 +71,12 @@ std::vector<cv::Point3d> generateObjectPoints(const ccl::PatternSize& size, doub
     return pts;
 }
 
-// Создание детектора (с параметрами по умолчанию)
 ccl::ChessboardDetector createDetector(const std::string& configPath) {
     if (!configPath.empty()) {
         std::cout << "Detector config loading not implemented, using default parameters.\n";
     }
-    return ccl::ChessboardDetector(); // параметры по умолчанию
+    return ccl::ChessboardDetector();
 }
-
 
 bool processImages(const std::string& dir,
                    const ccl::PatternSize& boardSize,
@@ -141,7 +134,6 @@ bool processImages(const std::string& dir,
         auto boards = detector.detect(img);
         bool used = false;
         for (auto& board : boards) {
-            // Проверяем совпадение размера доски с ожидаемым
             if (board.get_size().get_width() != boardSize.get_width() ||
                 board.get_size().get_height() != boardSize.get_height()) {
                 continue;
@@ -152,13 +144,11 @@ bool processImages(const std::string& dir,
                 continue;
             }
 
-            // Минимальное число точек для калибровки (хотя бы 4)
             if (matches.image_points.size() < 4) {
                 std::cout << "FAIL (only " << matches.image_points.size() << " points, need >=4)" << std::endl;
                 continue;
             }
 
-            // Принимаем частичные наблюдения
             imagePoints.push_back(matches.image_points);
             objectPoints.push_back(matches.object_points);
             usedBoards.push_back(board);
@@ -166,9 +156,8 @@ bool processImages(const std::string& dir,
             usedFrames++;
             used = true;
 
-            // Индикация: сколько точек из полного числа найдено
             std::cout << "OK (" << matches.image_points.size() << "/" << totalPoints << " points)" << std::endl;
-            break; // одна доска на изображение
+            break;
         }
         if (!used) {
             std::cout << "FAIL (no suitable board)" << std::endl;
@@ -181,7 +170,6 @@ bool processImages(const std::string& dir,
     return !imagePoints.empty();
 }
 
-// Вывод справки
 void printUsage(const std::string& exeName) {
     std::cout << "Usage: " << exeName << " [OPTIONS]\n"
               << "Options:\n"
@@ -198,7 +186,6 @@ void printUsage(const std::string& exeName) {
               << "\nIf no arguments are given, the program runs interactively.\n";
 }
 
-// Разбор аргументов командной строки
 bool parseArguments(int argc, char* argv[], CalibrationConfig& cfg) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -244,14 +231,12 @@ bool parseArguments(int argc, char* argv[], CalibrationConfig& cfg) {
         std::cerr << "Missing required --images_dir\n";
         return false;
     }
-    // Подгоняем размеры через PatternSize (она может поменять местами)
     ccl::PatternSize ps(cfg.pattern_width, cfg.pattern_height);
     cfg.pattern_width = static_cast<int>(ps.get_width());
     cfg.pattern_height = static_cast<int>(ps.get_height());
     return true;
 }
 
-// Интерактивный ввод параметров
 bool interactiveConfig(CalibrationConfig& cfg) {
     std::cout << "Enter images directory: ";
     std::getline(std::cin, cfg.images_dir);
@@ -263,9 +248,8 @@ bool interactiveConfig(CalibrationConfig& cfg) {
     std::cin >> cfg.pattern_height;
     std::cout << "Enter square size (m): ";
     std::cin >> cfg.square_size;
-    std::cin.ignore(); // убираем '\n'
+    std::cin.ignore();
 
-    // Приводим размеры в порядок (width >= height) через PatternSize
     ccl::PatternSize ps(cfg.pattern_width, cfg.pattern_height);
     cfg.pattern_width = static_cast<int>(ps.get_width());
     cfg.pattern_height = static_cast<int>(ps.get_height());
@@ -307,12 +291,10 @@ bool interactiveConfig(CalibrationConfig& cfg) {
     return true;
 }
 
-// Главная функция
 int main(int argc, char* argv[]) {
     CalibrationConfig config;
     std::string exe_name = argv[0];
 
-    // Режим с аргументами или интерактивный
     if (argc > 1) {
         if (!parseArguments(argc, argv, config)) {
             printUsage(exe_name);
@@ -325,10 +307,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Создаём детектор
     auto detector = createDetector(config.detector_config_path);
 
-    // Обрабатываем изображения
     std::vector<std::vector<cv::Point2d>> imagePoints;
     std::vector<std::vector<cv::Point3d>> objectPoints;
     std::vector<ccl::Chessboard> usedBoards;
@@ -350,7 +330,6 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Successfully detected " << imagePoints.size() << " chessboard views.\n";
 
-    // Калибровка
     ccl::ZhangCalibrator calibrator;
     if(config.estimate_k3) {
         calibrator.set_estimation_k3();   
@@ -362,7 +341,6 @@ int main(int argc, char* argv[]) {
 
     auto result = calibrator.calibrate(objectPoints, imagePoints, imageSize);
 
-    // Вывод результатов
     std::cout << "\n================ Calibration Results ================\n";
     std::cout << "RMS reprojection error: " << result.rmse << "\n";
     std::cout << "Camera matrix:\n" << result.intrinsic.to_cv_mat() << "\n";
@@ -373,39 +351,33 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "\nWork time: " << result.time_seconds << " seconds\n";
 
-    // Сохранение XML
     if (!config.output_xml.empty()) {
         result.save_calibration_results_xml(config.output_xml, imageSize);
         std::cout << "Calibration saved to " << config.output_xml << "\n";
     }
 
-    // Сохранение визуализаций обнаружений и YAML‑файлов детекции
     if (config.save_detections && !config.output_xml.empty() && !usedBoards.empty()) {
         std::filesystem::path xmlPath(config.output_xml);
         std::filesystem::path detectionDir = xmlPath.parent_path() / "detections";
         std::filesystem::create_directories(detectionDir);
 
         for (size_t i = 0; i < usedBoards.size(); ++i) {
-            // Загружаем изображение в цвете для визуализации
             cv::Mat imgColor = cv::imread(usedImagePaths[i], cv::IMREAD_COLOR);
             if (imgColor.empty()) {
                 std::cerr << "Failed to load image for visualization: " << usedImagePaths[i] << "\n";
                 continue;
             }
 
-            // Рисуем доску на изображении
             usedBoards[i].vizualize(imgColor);
 
-            // Сохраняем картинку
             std::string imgFilename = "detection_" + std::to_string(i) + ".jpg";
             cv::imwrite((detectionDir / imgFilename).string(), imgColor);
 
-            // Сохраняем YAML‑описание детекции
             std::string yamlFilename = "detection_" + std::to_string(i) + ".yml";
             ccl::utils::save_detection_data_yaml(
                 (detectionDir / yamlFilename).string(),
-                usedBoards[i],                                // полный паттерн доски
-                objectPoints[i],                              // соответствующие 3D точки
+                usedBoards[i],
+                objectPoints[i],
                 config.square_size,
                 imageSize
             );
@@ -414,7 +386,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Команда для повторения
     std::cout << "\nTo repeat this calibration non-interactively, run:\n";
     std::cout << config.toCommandLine(exe_name) << std::endl;
 
